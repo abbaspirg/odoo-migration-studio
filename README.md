@@ -56,6 +56,19 @@ python3 --version   # 3.12+ for Odoo 19/20
 node -v             # 18+; older Ubuntu releases ship an older Node, so use nodesource or nvm
 ```
 
+### Windows (WSL2)
+
+The studio needs Linux: it uses Linux file locking and process groups, and `start.sh` is a
+bash script. On Windows, run it inside WSL2:
+
+1. In PowerShell as administrator: `wsl --install` (installs Ubuntu; restart if asked).
+2. Open the **Ubuntu** app and follow the steps above and below as written. Install Claude Code
+   inside WSL, not on the Windows side.
+3. Open http://127.0.0.1:5173 in your normal Windows browser. WSL2 forwards the port.
+
+Keep the studio, the Odoo sources and your modules in the Linux file system (for example
+`~/odoo-migration-studio`), not under `/mnt/c/...`: Odoo and git are much slower on Windows drives.
+
 ## Quick start
 
 ```bash
