@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 6px; border: 2px solid #09090b; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.md h1 { @apply text-xl font-semibold mt-2 mb-3 text-zinc-100; }
+.md h2 { @apply text-lg font-semibold mt-5 mb-2 text-zinc-100; }
+.md h3 { @apply text-base font-semibold mt-4 mb-2 text-zinc-200; }
+.md p { @apply my-2 leading-relaxed; }
+.md ul { @apply list-disc pl-5 my-2 space-y-1; }
+.md ol { @apply list-decimal pl-5 my-2 space-y-1; }
+.md code { @apply font-mono text-[12px] bg-zinc-800/80 px-1 py-0.5 rounded text-amber-200; }
+.md pre { @apply bg-zinc-900 border border-zinc-800 rounded p-3 overflow-x-auto my-2; }
+.md pre code { @apply bg-transparent p-0 text-zinc-300; }
+.md table { @apply w-full text-sm my-3 border-collapse; }
+.md th { @apply text-left border-b border-zinc-700 py-1.5 pr-3 text-zinc-400 font-medium; }
+.md td { @apply border-b border-zinc-800/80 py-1.5 pr-3 align-top; }
+.md a { @apply text-sky-400 underline; }
+.md details { @apply my-3; }
+.md summary { @apply cursor-pointer text-zinc-400; }
