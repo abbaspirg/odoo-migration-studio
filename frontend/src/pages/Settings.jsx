@@ -40,6 +40,9 @@ function WorkspaceInfo({ onSaved }) {
     ["Custom modules", st.default_custom_dir, "MS_CUSTOM_DIR"],
     ["Migration rules", `${st.rules_path}${st.rules_bundled ? "  (bundled generic rules)" : ""}`, "MS_RULES_FILE"],
     ["Reference module", st.reference_module || "none", "MS_REFERENCE_MODULE"],
+    ["API key mode", !st.api_key_allowed ? "off (uses the Claude account)"
+      : st.api_key_set ? "on (ANTHROPIC_API_KEY, billed per token)"
+      : "on, but ANTHROPIC_API_KEY is not set (uses the Claude account)", "MS_ALLOW_API_KEY"],
   ];
   return (
     <Card title="Workspace (set in .env, restart to apply)">
@@ -51,7 +54,9 @@ function WorkspaceInfo({ onSaved }) {
           </React.Fragment>
         ))}
         <span className="text-zinc-400">Claude account</span>
-        <span className="text-zinc-200">{st.claude?.logged_in
+        <span className="text-zinc-200">{st.claude?.logged_in && st.claude.auth_method === "api_key"
+          ? <>API key <span className="text-zinc-500">· ANTHROPIC_API_KEY, billed per token · turn off by removing MS_ALLOW_API_KEY from .env</span></>
+          : st.claude?.logged_in
           ? <>{st.claude.email} <span className="text-zinc-500">· {st.claude.subscription || st.claude.auth_method}{st.claude.org_name ? ` · ${st.claude.org_name}` : ""} · switch with <code className="font-mono">claude auth login</code></span></>
           : "not logged in — run claude auth login"}
           <Button variant="ghost" className="ml-2 px-2 py-0.5 text-xs" disabled={checking} onClick={recheck}>

@@ -7,7 +7,8 @@ engine, and then **installs and tests** the result in a real Odoo before you tru
 - **Your own Claude account.** The studio drives the `claude` CLI installed on your machine, so
   every migration runs on the Claude account *you* are logged into. Usage counts against your
   plan. The studio never asks for, stores or sees credentials, and `ANTHROPIC_API_KEY` is removed
-  from the subprocess environment so a stray key is never billed by accident.
+  from the subprocess environment so a stray key is never billed by accident. To use an API key
+  instead, opt in with `MS_ALLOW_API_KEY=1` (see [Using an API key](#using-an-api-key)).
 - **Runs locally.** Everything binds to `127.0.0.1`. Your modules, Odoo sources and test
   databases stay on your machine. The one exception: Claude Code sends the code it reads to
   Anthropic under your account, just as when you use Claude Code by hand.
@@ -37,7 +38,7 @@ Odoo commands are run by the backend, never by Claude.
 
 | Component | Notes |
 |---|---|
-| Claude Code | Install from https://claude.com/claude-code and sign in once with `claude` (or `claude auth login`). Any plan that includes Claude Code works. `claude auth status` must show `"loggedIn": true` |
+| Claude Code | Install from https://claude.com/claude-code and sign in once with `claude` (or `claude auth login`). Any plan that includes Claude Code works. `claude auth status` must show `"loggedIn": true`. Or use an [API key](#using-an-api-key) |
 | Python | 3.10+ for the studio (tested on 3.12). Odoo needs its own: 3.12+ for 19/20, 3.10–3.12 for 17/18, 3.8–3.11 for 16 |
 | Node.js | 18+ |
 | PostgreSQL | 13+, with a role that has `CREATEDB` and is **not** `postgres` (Odoo refuses to run as `postgres`) |
@@ -106,6 +107,21 @@ automatically as community 20.0. An `enterprise-addons/` folder inside it is use
 and `<workspace>/venv/` as its Python venv.
 
 All variables are listed in `.env.example`.
+
+### Using an API key
+
+No Claude plan with Claude Code, or the account can't log in on this machine? Use an Anthropic API
+key from https://console.anthropic.com instead. Usage is billed per token to that key's Console
+account. Add both lines to `.env` (or export them) and restart the studio:
+
+```bash
+MS_ALLOW_API_KEY=1
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Claude Code uses the key even when an account is also logged in. The header badge then shows
+"API key", and the dashboard shows the cost of each Claude run. Remove `MS_ALLOW_API_KEY` to go
+back to the logged-in account. `.env` is git-ignored, so the key never ends up in the repo.
 
 ## Migration rules
 

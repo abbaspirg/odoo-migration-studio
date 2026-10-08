@@ -52,6 +52,8 @@ RULES_FILE = _path("MS_RULES_FILE", WORKSPACE / "MIGRATION_RULES.md"
 # optional: an already-migrated module Claude should copy conventions from
 REFERENCE_MODULE = _path("MS_REFERENCE_MODULE", WORKSPACE / "reference_module")
 DEFAULT_CUSTOM_DIR = _path("MS_CUSTOM_DIR", WORKSPACE / "custom-modules")
+# opt-in: let `claude` use ANTHROPIC_API_KEY (billed per token) instead of only the logged-in account
+ALLOW_API_KEY = os.environ.get("MS_ALLOW_API_KEY", "").strip().lower() in ("1", "true", "yes")
 
 VERSIONS = ["16.0", "17.0", "18.0", "19.0", "20.0"]
 ODOO_GIT_URL = "https://github.com/odoo/odoo.git"

@@ -58,7 +58,7 @@ export default function App() {
             <NavLink to="/settings" title={`Claude Code ${status.claude.version || ""} — migrations run on this account. Switch with: claude auth login`}
               className={`flex items-center gap-2 rounded-full px-3 py-1 ring-1 ${status.claude.logged_in ? "bg-emerald-500/10 text-emerald-200 ring-emerald-500/30 hover:bg-emerald-500/20" : "bg-rose-500/10 text-rose-200 ring-rose-500/40"}`}>
               <span className="text-[10px] uppercase tracking-wide text-zinc-400">Claude</span>
-              <span className="font-medium">{status.claude.logged_in ? (status.claude.email || "logged in") : "not logged in"}</span>
+              <span className="font-medium">{status.claude.logged_in ? (status.claude.auth_method === "api_key" ? "API key" : status.claude.email || "logged in") : "not logged in"}</span>
               {status.claude.subscription && <span className="rounded bg-zinc-800 px-1.5 text-[10px] uppercase text-zinc-300">{status.claude.subscription}</span>}
             </NavLink>
           )}

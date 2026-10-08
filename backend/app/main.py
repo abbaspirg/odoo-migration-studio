@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import shutil
 import time
 import uuid
@@ -67,7 +68,10 @@ async def status(refresh: bool = False):
             "rules_bundled": config.RULES_FILE == config.BUNDLED_RULES.resolve(),
             "reference_module": str(config.REFERENCE_MODULE)
             if (config.REFERENCE_MODULE / "__manifest__.py").is_file() else None,
-            "versions": config.VERSIONS, "default_custom_dir": str(config.DEFAULT_CUSTOM_DIR)}
+            "versions": config.VERSIONS, "default_custom_dir": str(config.DEFAULT_CUSTOM_DIR),
+            # never the key itself, only whether one is there
+            "api_key_allowed": config.ALLOW_API_KEY,
+            "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY"))}
 
 
 @app.get("/api/settings")

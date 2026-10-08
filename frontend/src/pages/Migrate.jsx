@@ -127,7 +127,12 @@ export default function Migrate({ status }) {
             </div>
           )}
           <ErrorBox>{err}</ErrorBox>
-          {status?.claude?.logged_in && (
+          {status?.claude?.logged_in && status.claude.auth_method === "api_key" && (
+            <div className="text-center text-xs text-amber-300/80">
+              Runs on your Anthropic API key (ANTHROPIC_API_KEY): every run is billed per token.
+            </div>
+          )}
+          {status?.claude?.logged_in && status.claude.auth_method !== "api_key" && (
             <div className="text-center text-xs text-zinc-500">
               Runs on your Claude account <span className="text-zinc-300">{status.claude.email}</span>
               {status.claude.subscription ? ` (${status.claude.subscription})` : ""} — usage counts against its plan.

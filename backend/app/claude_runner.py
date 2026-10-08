@@ -18,6 +18,14 @@ def _cut(text, n: int = MAX_FIELD) -> str:
     return text if len(text) <= n else text[:n] + f"\n… [{len(text) - n} more chars]"
 
 
+def claude_env() -> dict:
+    """Environment for every `claude` call. ANTHROPIC_API_KEY passes through only with MS_ALLOW_API_KEY."""
+    env = dict(os.environ)
+    if not config.ALLOW_API_KEY:
+        env.pop("ANTHROPIC_API_KEY", None)
+    return env
+
+
 async def cli_status() -> dict:
     """`claude --version` + `claude auth status` for the startup banner."""
     exe = shutil.which("claude")
@@ -29,11 +37,11 @@ async def cli_status() -> dict:
         return info
     try:
         proc = await asyncio.create_subprocess_exec(exe, "--version", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
+                                                    stderr=asyncio.subprocess.STDOUT, env=claude_env())
         out, _ = await asyncio.wait_for(proc.communicate(), 30)
         info["version"] = out.decode().strip()
         proc = await asyncio.create_subprocess_exec(exe, "auth", "status", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
+                                                    stderr=asyncio.subprocess.PIPE, env=claude_env())
         out, err = await asyncio.wait_for(proc.communicate(), 30)
         try:
             status = json.loads(out.decode() or "{}")
@@ -45,7 +53,8 @@ async def cli_status() -> dict:
         info["email"] = status.get("email")
         info["org_name"] = status.get("orgName")
         if not info["logged_in"]:
-            info["error"] = "Claude Code is installed but not logged in. Run `claude auth login` in a terminal."
+            info["error"] = ("Claude Code is installed but not logged in. Run `claude auth login` in a terminal"
+                             + (" or set ANTHROPIC_API_KEY." if config.ALLOW_API_KEY else "."))
     except (OSError, asyncio.TimeoutError) as exc:
         info["error"] = f"Could not run claude: {exc}"
     return info
@@ -153,8 +162,7 @@ class ClaudeRun:
     async def run(self, prompt: str, module_dir: Path, settings: dict, token: CancelToken,
                   env_path_prefix: str | None = None, resume: str | None = None) -> dict:
         cmd = build_command(prompt, settings, resume)
-        env = dict(os.environ)
-        env.pop("ANTHROPIC_API_KEY", None)     # always use the logged-in Claude Code account
+        env = claude_env()
         if env_path_prefix:                     # `python` → the target Odoo venv
             env["PATH"] = env_path_prefix + os.pathsep + env.get("PATH", "")
         shown = [c if len(c) < 200 else c[:60] + "…" for c in cmd]
