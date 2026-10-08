@@ -563,7 +563,7 @@ class ModulePipeline:
         info.update(status=status, error=error, finished_at=time.time())
         db.update_module(self.job_id, self.module, manual_fix=info)
         events.publish("manual_fix", info, job_id=self.job_id, module=self.module)
-        self.set_module_status(status, error=error, finished_at=time.time())
+        self.set_module_status(status, error=error)
         return info
 
 
@@ -651,7 +651,7 @@ def start_manual_fix(job: dict, module: str, notes: str) -> None:
     manual.stop(job_id, module)               # it serves the old code; restarted fresh on success
     token = CancelToken()
     RUNNING[job_id] = {"tokens": {module: token}, "cancelled": False}
-    db.update_job(job_id, status="running", finished_at=None)
+    db.update_job(job_id, status="running")
     events.publish("job", {"status": "running"}, job_id=job_id)
 
     async def go():
@@ -669,7 +669,7 @@ def start_manual_fix(job: dict, module: str, notes: str) -> None:
             RUNNING.pop(job_id, None)
             mods = db.list_modules(job_id)
             status = "passed" if all(m["status"] == "passed" for m in mods) else "failed"
-            db.update_job(job_id, status=status, finished_at=time.time())
+            db.update_job(job_id, status=status)
             events.publish("job", {"status": status}, job_id=job_id)
         if info.get("status") == "passed":
             # wait for the old server to release before starting a fresh one
