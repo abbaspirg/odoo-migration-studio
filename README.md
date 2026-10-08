@@ -170,6 +170,35 @@ source: `ir.access`, `t-esc`→`t-out`, the Interaction framework, OWL 3, and mo
 rules (licensing, manifest style, per-module notes) as `<workspace>/MIGRATION_RULES.md`, and the
 studio uses that file instead. Contributions of verified rules for other versions are welcome.
 
+### Your house style: reference module and rules
+
+Make every migration follow your own templates with two things in the workspace:
+
+- **`<workspace>/MIGRATION_RULES.md`:** your rules. It *replaces* the bundled file, so start from
+  a copy of `rules/MIGRATION_RULES.md` and add your own rules (licensing, manifest style, what to
+  do with the app page), so you keep the verified API catalogue.
+- **`<workspace>/reference_module/`:** one module already migrated the way you want (or set
+  `MS_REFERENCE_MODULE` in `.env`). Claude copies its manifest keys, README and doc layout and
+  license header.
+
+Settings → Workspace shows which rules file and reference module are active. Both are read again
+for every migration, so when your templates change, replace the folder or edit the file: the next
+migration uses them, with no restart.
+
+**The app page (`static/description/index.html`).** By default the studio keeps each module's
+existing index layout and only updates versions, dates and version links. To restyle every index
+to your reference module's design instead, add a rule like this to your rules file:
+
+```markdown
+- Restyle `static/description/index.html` to match `reference_module/static/description/index.html`
+  (layout, fonts, inline styles). Keep all of the module's own content, screenshots and links.
+  Copy any icons it uses from the reference's `static/description/assets/`.
+```
+
+**Modules you've already migrated** don't need a new migration. Open the module on the
+dashboard, write what to change in the Manual test box (for example *"Restyle index.html to the
+current reference_module layout, keep all content"*) and click **Send to Claude to fix**.
+
 ## Terminal mode
 
 ```bash

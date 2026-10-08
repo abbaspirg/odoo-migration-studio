@@ -77,7 +77,12 @@ def claude_md(module, src_ver, tgt_ver, source_module: Path, out: Path) -> str:
     skills = tgt_tree / "skills" if tgt_tree and (tgt_tree / "skills").is_dir() else None
     ref = config.REFERENCE_MODULE if (config.REFERENCE_MODULE / "__manifest__.py").is_file() else None
     style = (f"- Already-migrated reference module to copy conventions from: `{ref}` (manifest keys,\n"
-             f"  README/doc layout, license header).\n") if ref else ""
+             f"  README/doc layout, license header).\n"
+             f"- Its `static/description/index.html` shows the current app-page design. Restyle this\n"
+             f"  module's index.html to it ONLY if the migration rules ask for that (then keep all of the\n"
+             f"  module's own content, screenshots and links, and copy any icons it uses from the\n"
+             f"  reference's `static/description/assets/`). Otherwise keep the existing index layout and\n"
+             f"  only update versions, dates and version-specific links.\n") if ref else ""
     return f"""# Migration context for `{module}` (written by Odoo Migration Studio)
 
 - Source version: **Odoo {src_ver}**  →  Target version: **Odoo {tgt_ver}**
