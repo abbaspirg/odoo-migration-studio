@@ -118,3 +118,58 @@ def append_summary(*, job, module, status, attempts, verdicts, report_path: Path
             fh.write(SUMMARY_HEADER)
         fh.write(line)
         fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def append_manual_fix(*, job, module, rnd, status, notes, claude_report, steps, error) -> Path:
+    """Add a "Manual fix round N" section to migration-notes/<module>.md and a summary line."""
+    path = config.NOTES_DIR / f"{module}.md"
+    text = path.read_text(encoding="utf-8") if path.exists() else f"# `{module}`\n"
+    checks = [f"- {s['label']}: **{s['status']}**" + (f" — {s['summary']}" if s.get("summary") else "")
+              for s in steps if s["id"] in ("static", "install", "test", "fix")]
+    section = [f"## Manual fix round {rnd}", "",
+               f"- **Result:** {status.upper()}" + (f" — {error}" if error else ""),
+               f"- **Date:** {time.strftime('%Y-%m-%d %H:%M')}", "",
+               "### What the tester reported", "", notes.strip() or "_No notes._", "",
+               "### Claude's report", "", (claude_report or "_No report._").strip(), "",
+               "### Checks after the fix", "", *checks, ""]
+    path.write_text(text.rstrip() + "\n\n" + "\n".join(section), encoding="utf-8")
+    line = (f"- {time.strftime('%Y-%m-%d %H:%M')} — `{module}` {job['source_version']} → "
+            f"{job['target_version']}: manual fix round {rnd} **{status}** (job `{job['id']}`) — "
+            f"report: `{_rel(path)}`\n")
+    with open(config.SUMMARY_FILE, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.seek(0)
+        if "## Migration Studio runs" not in fh.read():
+            fh.write(SUMMARY_HEADER)
+        fh.write(line)
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return path
+
+
+LESSONS_HEADER = "## Lessons from manual tests"
+
+
+def add_rule(text: str, module: str) -> Path:
+    """Append a rule learned from a manual test to the user's migration rules file.
+
+    The bundled rules are never edited: if they are the active file, they are copied to
+    <workspace>/MIGRATION_RULES.md first (which then takes over, as documented)."""
+    rule = " ".join(text.split())
+    if not rule:
+        raise ValueError("The rule is empty")
+    target = config.RULES_FILE
+    if target.resolve() == config.BUNDLED_RULES.resolve():
+        target = config.WORKSPACE / "MIGRATION_RULES.md"
+        if not target.exists():
+            target.write_text(config.BUNDLED_RULES.read_text(encoding="utf-8"), encoding="utf-8")
+        config.RULES_FILE = target
+    with open(target, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.seek(0)
+        body = fh.read()
+        if LESSONS_HEADER not in body:
+            fh.write(("\n" if body.endswith("\n") else "\n\n") + LESSONS_HEADER + "\n\n"
+                     "_Added from Odoo Migration Studio manual tests._\n\n")
+        fh.write(f"- {rule} _(from `{module}`, {time.strftime('%Y-%m-%d')})_\n")
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return target

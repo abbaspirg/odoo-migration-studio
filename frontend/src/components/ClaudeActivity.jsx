@@ -58,7 +58,10 @@ export default function ClaudeActivity({ events }) {
           return (
             <div key={i} className="flex items-center gap-2 pt-2 text-[11px] uppercase tracking-wide text-violet-300">
               <span className="h-px flex-1 bg-violet-500/30" />
-              {d.attempt === 0 ? "Migration run" : d.attempt === "0c" ? "Migration run (continued after max turns)" : `Auto-fix attempt ${d.attempt}`}{d.resume ? " (resumed session)" : ""}
+              {d.attempt === 0 ? "Migration run" : d.attempt === "0c" ? "Migration run (continued after max turns)"
+                : /^m\d+$/.test(String(d.attempt)) ? `Manual fix round ${String(d.attempt).slice(1)}`
+                : /^m\d+\.\d+$/.test(String(d.attempt)) ? `Manual fix round ${String(d.attempt).slice(1).split(".")[0]}, auto-fix attempt ${String(d.attempt).split(".")[1]}`
+                : `Auto-fix attempt ${d.attempt}`}{d.resume ? " (resumed session)" : ""}
               <span className="h-px flex-1 bg-violet-500/30" />
             </div>
           );

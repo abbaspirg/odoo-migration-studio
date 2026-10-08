@@ -102,6 +102,12 @@ Then in the UI:
 4. **Dashboard**: watch the step timeline, Claude's messages and edits, the Odoo log, a
    side-by-side diff and the report. When a module is done, use **Manual test** to start a real
    Odoo with it installed (login `admin` / `admin`) and record your verdict.
+   Found a problem? Describe it in the verdict box and click **Send to Claude to fix**. Claude
+   resumes the migration session with your notes and the errors from that Odoo's log, the studio
+   re-runs the checks, install and tests (with auto-fix), and if they pass, Odoo restarts on a
+   fresh database so you can test again. Each round is added to the module's report.
+   Claude also suggests a general rule. Edit it if needed and click **Add to migration rules**:
+   it goes into `<workspace>/MIGRATION_RULES.md`, so later migrations avoid the same mistake.
 5. **Download zip** gets the migrated modules and their reports. **Jobs** lists history and can
    re-run failed modules.
 

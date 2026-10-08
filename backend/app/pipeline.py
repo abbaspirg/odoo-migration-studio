@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import time
 import traceback
 from pathlib import Path
 
-from . import (analyzer, claude_runner, config, db, diffs, events, odoo_runner, reports,
+from . import (analyzer, claude_runner, config, db, diffs, events, manual, odoo_runner, reports,
                sources, static_checks)
 from .procs import CancelToken, Cancelled
 
@@ -147,6 +148,50 @@ Find and fix the root cause in the module (current directory). Grep the Odoo {tg
 confirm the correct API. Do not run odoo-bin; the backend will re-run the checks when you finish.
 Reply with the same report format (## Changes made / ## Remaining TODOs / Needs review), covering
 the whole migration so far."""
+
+
+def manual_fix_prompt(tgt_ver, notes: str, server_log: str) -> str:
+    log = server_log.strip() or "(no ERROR lines in the server log: the problem only shows in the browser)"
+    return f"""A person installed your migrated module on a real Odoo {tgt_ver} server and clicked through it.
+The automatic checks had passed, but they found problems.
+
+## What the tester reported
+{notes.strip()}
+
+## Errors from that Odoo server's log
+```
+{log}
+```
+
+Find and fix the root cause in the module (current directory). Grep the Odoo {tgt_ver} source to
+confirm the correct API, templates, assets and JS imports, and compare with the original module
+(path in CLAUDE.md) where behaviour changed. Fix what was reported and anything with the same cause;
+leave unrelated code alone. Do not run odoo-bin: the backend re-runs static checks, install and
+tests when you finish, and the tester will check again.
+
+Reply in exactly this format:
+## Changes made
+- <one line per change, with file names>
+## Remaining TODOs / Needs review
+- <anything you could not verify or finish, or "None">
+## Rule suggestion
+- <one general rule for future migrations that would have prevented this mistake, written for any
+  module and verified against the Odoo {tgt_ver} source; or "None" if it was specific to this module>
+"""
+
+
+def rule_suggestion(report: str) -> str:
+    m = re.search(r"##\s*Rule suggestion\s*\n(.*?)(?=\n##\s|\Z)", report or "", re.S | re.I)
+    if not m:
+        return ""
+    text = re.sub(r"^\s*[-*]\s*", "", m.group(1).strip()).strip()
+    return "" if text.lower().strip(" ._*\"'") in ("none", "n/a", "") else text
+
+
+def manual_round(log_dir: Path) -> int:
+    rounds = [int(m.group(1)) for f in log_dir.glob("prompt_m*.txt")
+              if (m := re.fullmatch(r"prompt_m(\d+)\.txt", f.name))]
+    return max(rounds, default=0) + 1
 
 
 # ---------------------------------------------------------------- module pipeline
@@ -338,10 +383,13 @@ class ModulePipeline:
                              tst["error_excerpt"]))
         return failures
 
-    async def do_checks_and_fix(self) -> bool:
-        failures = await self.check_round(0)
+    async def do_checks_and_fix(self, label=lambda a: a, intro: str = "") -> bool:
+        failures = await self.check_round(label(0))
         if not failures:
-            self.set_step("fix", "skipped", "not needed")
+            if intro:
+                self.set_step("fix", "passed", f"{intro}: checks passed")
+            else:
+                self.set_step("fix", "skipped", "not needed")
             return True
         if self.max_attempts <= 0:
             self.set_step("fix", "skipped", "auto-fix disabled")
@@ -351,21 +399,23 @@ class ModulePipeline:
             self.token.check()
             self.attempts = attempt
             db.update_module(self.job_id, self.module, attempts=attempt)
-            self.set_step("fix", "running", f"attempt {attempt}/{self.max_attempts}: Claude fixing "
-                                            f"{len(failures)} failure(s)")
+            self.set_step("fix", "running", f"{intro + ', ' if intro else ''}attempt {attempt}/"
+                                            f"{self.max_attempts}: Claude fixing {len(failures)} failure(s)")
             prompt = fix_prompt(self.tgt_ver, attempt, self.max_attempts, failures)
-            (self.log_dir / f"prompt_{attempt}.txt").write_text(prompt)
-            res = await self.run_claude(prompt, attempt)
+            (self.log_dir / f"prompt_{label(attempt)}.txt").write_text(prompt)
+            res = await self.run_claude(prompt, label(attempt))
             if not res["session_id"]:
                 self.set_step("fix", "failed", f"Claude fix run {attempt} failed")
                 return False
-            self.set_step("fix", "running", f"attempt {attempt}/{self.max_attempts}: re-checking")
-            failures = await self.check_round(attempt)
+            self.set_step("fix", "running", f"{intro + ', ' if intro else ''}attempt {attempt}/"
+                                            f"{self.max_attempts}: re-checking")
+            failures = await self.check_round(label(attempt))
             if not failures:
-                self.set_step("fix", "passed", f"fixed after {attempt} attempt(s)", attempts=attempt)
+                self.set_step("fix", "passed", f"{intro + ': ' if intro else ''}fixed after {attempt} "
+                                               f"attempt(s)", attempts=attempt)
                 return True
-        self.set_step("fix", "failed", f"still failing after {self.max_attempts} attempt(s)",
-                      attempts=self.max_attempts)
+        self.set_step("fix", "failed", f"{intro + ': ' if intro else ''}still failing after "
+                                       f"{self.max_attempts} attempt(s)", attempts=self.max_attempts)
         return False
 
     async def write_report(self, final_status: str, error: str | None) -> Path:
@@ -452,6 +502,71 @@ class ModulePipeline:
         return status
 
 
+    # -- a fix round driven by what the human tester found
+    async def run_manual_fix(self, notes: str, server_log: str) -> dict:
+        mod = db.get_module(self.job_id, self.module) or {}
+        if mod.get("steps"):
+            self.steps = mod["steps"]
+        self.session_id = mod.get("session_id")
+        rnd = manual_round(self.log_dir)
+        label, intro = f"m{rnd}", f"manual fix round {rnd}"
+        info = {"round": rnd, "status": "running", "notes": notes.strip(), "report": "",
+                "rule_suggestion": "", "started_at": time.time(), "finished_at": None}
+        db.update_module(self.job_id, self.module, manual_fix=info, error=None)
+        events.publish("manual_fix", info, job_id=self.job_id, module=self.module)
+        self.set_module_status("running")
+        status, error = "failed", None
+        claude_md_log = self.log_dir / "CLAUDE.md"           # session context, moved aside by the report
+        try:
+            if claude_md_log.exists():
+                shutil.copy(claude_md_log, self.out / "CLAUDE.md")
+            self.source_fp = await asyncio.to_thread(static_checks.fingerprint, self.source_module)
+            self.set_step("fix", "running", f"{intro}: Claude fixing what you reported")
+            prompt = manual_fix_prompt(self.tgt_ver, notes, server_log)
+            (self.log_dir / f"prompt_{label}.txt").write_text(prompt)
+            res = await self.run_claude(prompt, label)
+            info["report"] = res["result_text"] or ""
+            info["rule_suggestion"] = rule_suggestion(info["report"])
+            if not res["ok"] and not res["session_id"]:
+                raise StepFailed("fix", f"Claude run failed (exit {res['returncode']}, "
+                                        f"{res['subtype'] or 'no result'})")
+            ok = await self.do_checks_and_fix(lambda a: label if a == 0 else f"{label}.{a}", intro)
+            status = "passed" if ok else "failed"
+            if not ok:
+                error = "; ".join(s["summary"] for s in self.steps
+                                  if s["status"] == "failed" and s["id"] != "fix")[:500]
+        except Cancelled:
+            status, error = "cancelled", "Cancelled by user"
+            self.set_step("fix", "cancelled", f"{intro}: cancelled")
+        except StepFailed as exc:
+            status, error = "failed", exc.message
+            self.set_step(exc.step, "failed", exc.message)
+        except Exception as exc:          # noqa: BLE001
+            status, error = "failed", f"{type(exc).__name__}: {exc}"
+            (self.log_dir / f"crash_{label}.txt").write_text(traceback.format_exc())
+            self.set_step("fix", "failed", error)
+        finally:
+            (self.out / "CLAUDE.md").unlink(missing_ok=True)
+        for st in self.steps:                  # nothing may stay "running" after the round
+            if st["id"] in ("static", "install", "test", "fix") and st["status"] == "running":
+                self.set_step(st["id"], "cancelled" if status == "cancelled" else "failed")
+            elif st["id"] in ("static", "install", "test") and st["status"] == "pending":
+                self.set_step(st["id"], "skipped")
+        self.token.cancelled = False
+        try:
+            await asyncio.to_thread(reports.append_manual_fix, job=self.job, module=self.module,
+                                    rnd=rnd, status=status, notes=notes, claude_report=info["report"],
+                                    steps=self.steps, error=error)
+        except Exception as exc:          # noqa: BLE001 - the round's result matters more than the note
+            (self.log_dir / f"report_{label}_error.txt").write_text(f"{exc}\n")
+        await self.do_cleanup()
+        info.update(status=status, error=error, finished_at=time.time())
+        db.update_module(self.job_id, self.module, manual_fix=info)
+        events.publish("manual_fix", info, job_id=self.job_id, module=self.module)
+        self.set_module_status(status, error=error, finished_at=time.time())
+        return info
+
+
 class StepFailed(Exception):
     def __init__(self, step: str, message: str):
         super().__init__(message)
@@ -527,6 +642,48 @@ def cancel_job(job_id: str, module: str | None = None) -> bool:
         if module is None or name == module:
             token.cancel()
     return True
+
+
+def start_manual_fix(job: dict, module: str, notes: str) -> None:
+    """Send the tester's notes and the manual server's errors to Claude, re-check, restart Odoo."""
+    job_id = job["id"]
+    server_log = manual.server_errors(job_id, module)
+    manual.stop(job_id, module)               # it serves the old code; restarted fresh on success
+    token = CancelToken()
+    RUNNING[job_id] = {"tokens": {module: token}, "cancelled": False}
+    db.update_job(job_id, status="running", finished_at=None)
+    events.publish("job", {"status": "running"}, job_id=job_id)
+
+    async def go():
+        info = {"status": "failed"}
+        try:
+            await limiter().acquire(token)
+            try:
+                info = await ModulePipeline(job, module, token).run_manual_fix(notes, server_log)
+            finally:
+                await limiter().release()
+        except Cancelled:
+            db.update_module(job_id, module, status="cancelled", error="Cancelled before start")
+            events.publish("module", {"status": "cancelled"}, job_id=job_id, module=module)
+        finally:
+            RUNNING.pop(job_id, None)
+            mods = db.list_modules(job_id)
+            status = "passed" if all(m["status"] == "passed" for m in mods) else "failed"
+            db.update_job(job_id, status=status, finished_at=time.time())
+            events.publish("job", {"status": status}, job_id=job_id)
+        if info.get("status") == "passed":
+            # wait for the old server to release before starting a fresh one
+            for _ in range(40):
+                s = manual.get_server(job_id, module)
+                if not s or s["status"] in ("stopped", "crashed"):
+                    break
+                await asyncio.sleep(0.5)
+            try:
+                await manual.start(db.get_job(job_id), module, fresh=True)
+            except (ValueError, RuntimeError) as exc:
+                events.publish("manual_fix", {**info, "restart_error": str(exc)}, job_id=job_id, module=module)
+
+    RUNNING[job_id]["task"] = asyncio.create_task(go())
 
 
 def recover_interrupted() -> None:

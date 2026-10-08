@@ -60,6 +60,8 @@ def conn() -> sqlite3.Connection:
         mcols = {r[1] for r in _conn.execute("PRAGMA table_info(job_modules)")}
         if "manual_test" not in mcols:
             _conn.execute("ALTER TABLE job_modules ADD COLUMN manual_test TEXT")
+        if "manual_fix" not in mcols:
+            _conn.execute("ALTER TABLE job_modules ADD COLUMN manual_fix TEXT")
         _conn.commit()
     return _conn
 
@@ -104,6 +106,7 @@ def _decode_module(row: dict) -> dict:
     row["depends"] = json.loads(row["depends"] or "[]")
     row["steps"] = json.loads(row["steps"] or "[]")
     row["manual_test"] = json.loads(row["manual_test"]) if row.get("manual_test") else None
+    row["manual_fix"] = json.loads(row["manual_fix"]) if row.get("manual_fix") else None
     return row
 
 
@@ -160,6 +163,8 @@ def get_module(job_id: str, module: str) -> dict | None:
 def update_module(job_id: str, module: str, **fields) -> None:
     if "steps" in fields:
         fields["steps"] = json.dumps(fields["steps"])
+    if isinstance(fields.get("manual_fix"), dict):
+        fields["manual_fix"] = json.dumps(fields["manual_fix"])
     cols = ", ".join(f"{k} = ?" for k in fields)
     _exec(f"UPDATE job_modules SET {cols} WHERE job_id = ? AND module = ?",
           (*fields.values(), job_id, module))

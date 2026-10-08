@@ -133,6 +133,35 @@ def stop_all() -> None:
             s["_token"].cancel()
 
 
+# ---------------------------------------------------------------- errors seen while testing
+LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+ \d+ (\w+) ")
+HTTP_500 = re.compile(r'" 50\d ')
+
+
+def server_errors(job_id: str, module: str, limit: int = 8000) -> str:
+    """ERROR/CRITICAL blocks (with tracebacks) and HTTP 5xx lines from the latest manual server log."""
+    s = SERVERS.get(_key(job_id, module))
+    path = Path(s["log_file"]) if s else None
+    if not path or not path.exists():
+        logs = sorted(events.module_log_dir(job_id, module).glob("odoo_manual_*.log"))
+        path = logs[-1] if logs else None
+    if not path or not path.exists():
+        return ""
+    blocks, current = [], None
+    for line in path.read_text(errors="replace").splitlines():
+        m = LOG_LINE.match(line)
+        if m:
+            current = None
+            if m.group(1) in ("ERROR", "CRITICAL"):
+                current = [line]
+                blocks.append(current)
+            elif HTTP_500.search(line):
+                blocks.append([line])
+        elif current is not None:
+            current.append(line)          # traceback lines belong to the ERROR above them
+    return "\n\n".join("\n".join(b) for b in blocks)[-limit:]
+
+
 # ---------------------------------------------------------------- recording the verdict
 MANUAL_HEADER = "## Manual test"
 

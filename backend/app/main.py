@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (claude_runner, config, db, diffs, events, manual, modules, odoo_runner,
-               pipeline, sources)
+               pipeline, reports, sources)
 
 CLAUDE_STATUS: dict = {}
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
@@ -373,6 +373,40 @@ def manual_result(job_id: str, module: str, body: ManualResult):
         return manual.record_result(job, module, body.result, body.notes)
     except ValueError as exc:
         _bad(str(exc))
+
+
+class ManualFix(BaseModel):
+    notes: str
+
+
+@app.post("/api/jobs/{job_id}/modules/{module}/manual-fix")
+async def manual_fix(job_id: str, module: str, body: ManualFix):
+    job, mod = _module_or_404(job_id, module)
+    if not body.notes.strip():
+        _bad("Describe what is wrong first: Claude works from your notes")
+    if job_id in pipeline.RUNNING or mod["status"] not in pipeline.TERMINAL:
+        _bad("Wait until this job has finished running")
+    if not (Path(job["output_dir"]) / module / "__manifest__.py").is_file():
+        _bad("No migrated output for this module")
+    if not CLAUDE_STATUS.get("logged_in"):
+        _bad("Claude Code is not available or not logged in (see banner)")
+    manual.record_result(job, module, "failed", body.notes)
+    pipeline.start_manual_fix(job, module, body.notes)
+    return {"ok": True}
+
+
+class RuleIn(BaseModel):
+    text: str
+    module: str = ""
+
+
+@app.post("/api/rules/lessons")
+def add_rule(body: RuleIn):
+    try:
+        path = reports.add_rule(body.text, body.module)
+    except ValueError as exc:
+        _bad(str(exc))
+    return {"ok": True, "path": str(path)}
 
 
 # ---------------------------------------------------------------- test databases

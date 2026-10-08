@@ -55,6 +55,9 @@ export default function JobDashboard() {
     } else if (ev.kind === "manual_result") {
       setJob((j) => j && { ...j, modules: j.modules.map((m) => (m.module === ev.module ? { ...m, manual_test: ev.data } : m)) });
       if (ev.module === selected) setRefreshKey((k) => k + 1);
+    } else if (ev.kind === "manual_fix") {
+      setJob((j) => j && { ...j, modules: j.modules.map((m) => (m.module === ev.module ? { ...m, manual_fix: ev.data } : m)) });
+      if (ev.module === selected) setRefreshKey((k) => k + 1);
     } else if (ev.kind === "job") {
       reload();
     } else if (ev.module === selected && (ev.kind.startsWith("claude_") || ev.kind.startsWith("odoo_"))) {

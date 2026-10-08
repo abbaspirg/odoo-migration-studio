@@ -12,9 +12,12 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
   const [err, setErr] = useState(null);
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(mod.manual_test);
+  const [rule, setRule] = useState("");
+  const [ruleSaved, setRuleSaved] = useState(null);
+  const fix = mod.manual_fix;
 
   useEffect(() => {
-    setServer(null); setErr(null); setSaved(mod.manual_test); setNotes(mod.manual_test?.notes || "");
+    setServer(null); setErr(null); setSaved(mod.manual_test); setNotes(mod.manual_test?.notes || ""); setRuleSaved(null);
     api("/api/manual").then((list) => setServer(list.find((s) => s.job_id === jobId && s.module === module) || null)).catch(() => {});
   }, [jobId, module]);
 
@@ -31,6 +34,11 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
   const start = run(async () => { setServer(await api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "POST", body: { fresh } })); onShowLog?.(); });
   const stop = run(() => api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "DELETE" }));
   const record = (result) => run(async () => setSaved(await api(`/api/jobs/${jobId}/modules/${module}/manual-result`, { method: "POST", body: { result, notes } })))();
+
+  useEffect(() => { setRule(fix?.rule_suggestion || ""); setRuleSaved(null); }, [fix?.round, fix?.rule_suggestion]);
+  const sendFix = run(() => api(`/api/jobs/${jobId}/modules/${module}/manual-fix`, { method: "POST", body: { notes } }));
+  const saveRule = run(async () => setRuleSaved((await api("/api/rules/lessons", { method: "POST", body: { text: rule, module } })).path));
+  const fixing = fix?.status === "running";
 
   const active = server && (server.status === "starting" || server.status === "ready" || server.status === "stopping");
   const pipelineBusy = mod.status === "running" || mod.status === "queued";
@@ -88,6 +96,40 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
           <Button className="flex-1 text-xs" disabled={busy} onClick={() => record("failed")}>✕ Mark failed</Button>
         </div>
         {saved && <div className="mt-1 text-[11px] text-zinc-500">Recorded {saved.result} · {fmtTime(saved.at)}</div>}
+      </div>
+
+      <div className="mt-3 border-t border-zinc-800 pt-3 text-xs">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="font-semibold text-zinc-200">Fix with Claude</span>
+          {fix && <Badge status={fix.status === "running" ? "running" : fix.status}>round {fix.round}: {fix.status}</Badge>}
+        </div>
+        {fixing ? (
+          <p className="text-sky-300">Claude is fixing what you reported (round {fix.round}). Follow it in the Claude tab; the checks, install and tests re-run after. If they pass, Odoo restarts here on a fresh database.</p>
+        ) : (
+          <>
+            <p className="mb-2 text-zinc-400">Describe what's wrong in the box above: the page, what you did, what you expected. Paste browser console errors too. Claude also gets the errors from this Odoo's log.</p>
+            <Button variant="primary" className="w-full" disabled={busy || pipelineBusy || !notes.trim()} onClick={sendFix}>
+              Send to Claude to fix
+            </Button>
+          </>
+        )}
+        {fix && !fixing && fix.status !== "passed" && fix.error && <div className="mt-2 text-rose-300">{fix.error}</div>}
+        {fix && !fixing && fix.status === "passed" && <div className="mt-2 text-emerald-300">Fixed and re-checked. Test it again in the restarted Odoo above.</div>}
+        {fix?.restart_error && <div className="mt-2 text-amber-300">Could not restart Odoo: {fix.restart_error}</div>}
+
+        {fix && !fixing && (
+          <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/60 p-2">
+            <div className="mb-1 text-zinc-400">Save the lesson for future migrations</div>
+            {!fix.rule_suggestion && <p className="mb-1 text-zinc-500">Claude found nothing general to learn here. You can still write a rule yourself.</p>}
+            <textarea value={rule} onChange={(e) => { setRule(e.target.value); setRuleSaved(null); }} rows={3}
+              placeholder="e.g. Website controllers must …"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
+            <Button className="mt-1 w-full text-xs" disabled={busy || !rule.trim() || !!ruleSaved} onClick={saveRule}>
+              {ruleSaved ? "Added to migration rules" : "Add to migration rules"}
+            </Button>
+            {ruleSaved && <div className="mt-1 break-all text-[11px] text-zinc-500">Saved in {ruleSaved}. Every later migration gets it.</div>}
+          </div>
+        )}
       </div>
       <ErrorBox>{err}</ErrorBox>
     </div>
