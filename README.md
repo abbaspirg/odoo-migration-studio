@@ -45,6 +45,17 @@ Odoo commands are run by the backend, never by Claude.
 | git | To clone Odoo community sources |
 | wkhtmltopdf | Optional, only if your module's tests render PDF reports (0.12.5/0.12.6 with patched Qt) |
 
+On Ubuntu/Debian, this installs everything except Claude Code. The `-dev` libraries are needed
+when the studio builds Odoo's Python requirements:
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-dev build-essential \
+     postgresql nodejs npm libpq-dev libldap2-dev libsasl2-dev libxml2-dev libxslt1-dev
+python3 --version   # 3.12+ for Odoo 19/20
+node -v             # 18+; older Ubuntu releases ship an older Node, so use nodesource or nvm
+```
+
 ## Quick start
 
 ```bash
@@ -53,8 +64,10 @@ git clone https://github.com/abbaspirg/odoo-migration-studio.git && cd odoo-migr
 # 1. a PostgreSQL role for the test databases (the studio only creates/drops databases named mig_*)
 sudo -u postgres psql -c "CREATE ROLE odoo_studio LOGIN CREATEDB PASSWORD 'odoo_studio'"
 
-# 2. sign in to Claude Code with your own account (once)
+# 2. sign in to Claude Code with your own account (once, in a normal terminal: it opens the browser)
+#    or skip this and use an API key instead (see "Using an API key")
 claude auth login
+claude auth status    # must show "loggedIn": true
 
 # 3. optional: point the studio at an existing folder (see "Workspace")
 cp .env.example .env
@@ -82,6 +95,13 @@ Then in the UI:
 Check Settings first: Postgres credentials (default `odoo_studio` / `odoo_studio` on
 `127.0.0.1:5432`), concurrency, fix attempts, and Claude options (max turns, allowed tools,
 model).
+
+### Stopping and updating
+
+- **Stop:** Ctrl+C in the terminal running `./start.sh`.
+- **Update:** `git pull` in the studio folder, then `./start.sh` again. If an update adds
+  dependencies, install them with `.venv/bin/pip install -r backend/requirements.txt` and
+  `(cd frontend && npm install)`.
 
 ## Workspace
 
