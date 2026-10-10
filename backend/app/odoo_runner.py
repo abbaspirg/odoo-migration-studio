@@ -55,6 +55,19 @@ def module_state(settings: dict, dbname: str, module: str) -> str | None:
         return None
 
 
+def demo_loaded(settings: dict, dbname: str) -> bool | None:
+    """Whether the database has demo data (None if it can't be read)."""
+    try:
+        conn = _pg_connect(settings, dbname)
+        with conn.cursor() as cr:
+            cr.execute("SELECT bool_or(demo) FROM ir_module_module")
+            row = cr.fetchone()
+        conn.close()
+        return bool(row and row[0])
+    except Exception:                 # noqa: BLE001
+        return None
+
+
 def drop_database(settings: dict, dbname: str) -> str | None:
     if not dbname.startswith("mig_"):
         return f"Refusing to drop non-studio database {dbname!r}"
@@ -98,8 +111,10 @@ def addons_path(target: str, output_dir: Path) -> str:
 
 
 def build_command(target: str, output_dir: Path, dbname: str, module: str, settings: dict,
-                  mode: str, http_port: int | None = None) -> list[str]:
-    """mode: install | test | manual (serve, module already installed) | manual_install."""
+                  mode: str, http_port: int | None = None, with_demo: bool = False) -> list[str]:
+    """mode: install | test | manual (serve, module already installed) | manual_install.
+
+    with_demo loads demo data; Odoo only applies it when it creates the database."""
     root = sources.community_path(target)
     py = sources.venv_python(target)
     if not root or not py:
@@ -122,6 +137,8 @@ def build_command(target: str, output_dir: Path, dbname: str, module: str, setti
         cmd += [f"--db-filter=^{re.escape(dbname)}$", "--log-level=info"]
         if mode == "manual_install":
             cmd += ["-i", module]
+    if with_demo:
+        cmd.append("--with-demo")
     cmd += shlex.split(settings.get("odoo_extra_args") or "")
     return cmd
 

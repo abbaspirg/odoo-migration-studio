@@ -8,6 +8,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
   const module = mod.module;
   const [server, setServer] = useState(null);
   const [fresh, setFresh] = useState(false);
+  const [demo, setDemo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [notes, setNotes] = useState("");
@@ -31,7 +32,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
     setBusy(true); setErr(null);
     try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
-  const start = run(async () => { setServer(await api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "POST", body: { fresh } })); onShowLog?.(); });
+  const start = run(async () => { setServer(await api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "POST", body: { fresh, demo } })); onShowLog?.(); });
   const stop = run(() => api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "DELETE" }));
   const record = (result) => run(async () => setSaved(await api(`/api/jobs/${jobId}/modules/${module}/manual-result`, { method: "POST", body: { result, notes } })))();
 
@@ -58,6 +59,10 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
             <input type="checkbox" className="accent-violet-500" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />
             fresh database (otherwise reuse a kept one if it has the module installed)
           </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="accent-violet-500" checked={demo} onChange={(e) => setDemo(e.target.checked)} />
+            demo data (only reuses a database that also has demo data, else creates one)
+          </label>
           <Button variant="primary" className="w-full" disabled={busy || pipelineBusy} onClick={start}>
             {pipelineBusy ? "Available when the pipeline finishes" : "Start Odoo for manual test"}
           </Button>
@@ -79,6 +84,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
           <div className="grid grid-cols-[5rem_1fr] gap-y-0.5 text-zinc-400">
             <span>login</span><span className="font-mono text-zinc-200">{server.login} / {server.password}</span>
             <span>database</span><span className="break-all font-mono">{server.db}</span>
+            <span>demo data</span><span>{server.demo ? "yes" : "no"}</span>
             <span>started</span><span>{fmtTime(server.started_at)}</span>
           </div>
           <Button variant="danger" className="w-full" disabled={busy || server.status === "stopping"} onClick={stop}>Stop server</Button>

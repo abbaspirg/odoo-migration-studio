@@ -54,7 +54,7 @@ async def _wait_ready(s: dict) -> None:
         await asyncio.sleep(1.5)
 
 
-async def start(job: dict, module: str, fresh: bool = False) -> dict:
+async def start(job: dict, module: str, fresh: bool = False, demo: bool = False) -> dict:
     key = _key(job["id"], module)
     if key in SERVERS and SERVERS[key]["status"] in ("starting", "ready"):
         raise ValueError("A manual test server is already running for this module")
@@ -65,7 +65,7 @@ async def start(job: dict, module: str, fresh: bool = False) -> dict:
     mod = db.get_module(job["id"], module) or {}
 
     # reuse a database that already has the module installed (e.g. "keep DB" or a
-    # previous manual session), unless a fresh one is requested
+    # previous manual session) and the requested demo data setting, unless a fresh one is requested
     dbname, install = None, True
     # oldest → newest; earlier manual databases are found in Postgres so they survive a restart
     earlier = sorted(d for d in await asyncio.to_thread(odoo_runner.list_studio_databases, settings)
@@ -76,7 +76,8 @@ async def start(job: dict, module: str, fresh: bool = False) -> dict:
         for cand in filter(None, reversed(candidates)):
             if await asyncio.to_thread(odoo_runner.database_exists, settings, cand):
                 state = await asyncio.to_thread(odoo_runner.module_state, settings, cand, module)
-                if state == "installed":
+                has_demo = await asyncio.to_thread(odoo_runner.demo_loaded, settings, cand)
+                if state == "installed" and has_demo == demo:
                     dbname, install = cand, False
                     break
     if not dbname:
@@ -86,11 +87,12 @@ async def start(job: dict, module: str, fresh: bool = False) -> dict:
     n = int(time.time())
     log_dir = events.module_log_dir(job["id"], module)
     cmd = odoo_runner.build_command(job["target_version"], out_dir, dbname, module, settings,
-                                    "manual_install" if install else "manual", http_port=port)
+                                    "manual_install" if install else "manual", http_port=port,
+                                    with_demo=demo and install)
     token = CancelToken()
     s = {"job_id": job["id"], "module": module, "db": dbname, "port": port,
          "url": f"http://127.0.0.1:{port}/odoo", "login": "admin", "password": "admin",
-         "installing": install, "status": "starting", "started_at": time.time(),
+         "installing": install, "demo": demo, "status": "starting", "started_at": time.time(),
          "ready_at": None, "stopped_at": None, "exit_code": None, "error": None,
          "log_file": str(log_dir / f"odoo_manual_{n}.log"), "_token": token}
     SERVERS[key] = s

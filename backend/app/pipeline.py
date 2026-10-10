@@ -692,14 +692,15 @@ def start_manual_fix(job: dict, module: str, notes: str) -> None:
             db.update_job(job_id, status=status)
             events.publish("job", {"status": status}, job_id=job_id)
         if info.get("status") == "passed":
-            # wait for the old server to release before starting a fresh one
+            # wait for the old server to release before starting a fresh one, with the same demo setting
+            demo = bool((manual.get_server(job_id, module) or {}).get("demo"))
             for _ in range(40):
                 s = manual.get_server(job_id, module)
                 if not s or s["status"] in ("stopped", "crashed"):
                     break
                 await asyncio.sleep(0.5)
             try:
-                await manual.start(db.get_job(job_id), module, fresh=True)
+                await manual.start(db.get_job(job_id), module, fresh=True, demo=demo)
             except (ValueError, RuntimeError) as exc:
                 events.publish("manual_fix", {**info, "restart_error": str(exc)}, job_id=job_id, module=module)
 

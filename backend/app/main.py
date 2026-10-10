@@ -336,6 +336,7 @@ def download(job_id: str):
 # ---------------------------------------------------------------- manual testing
 class ManualStart(BaseModel):
     fresh: bool = False
+    demo: bool = False
 
 
 class ManualResult(BaseModel):
@@ -354,7 +355,7 @@ async def manual_start(job_id: str, module: str, body: ManualStart):
     if mod["status"] in ("running", "queued"):
         _bad("Wait until the pipeline has finished this module")
     try:
-        return await manual.start(job, module, fresh=body.fresh)
+        return await manual.start(job, module, fresh=body.fresh, demo=body.demo)
     except (ValueError, RuntimeError) as exc:
         _bad(str(exc))
 
