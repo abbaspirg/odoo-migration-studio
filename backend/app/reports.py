@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+import re
 import time
 from pathlib import Path
 
@@ -120,18 +121,89 @@ def append_summary(*, job, module, status, attempts, verdicts, report_path: Path
         fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def append_manual_fix(*, job, module, rnd, status, notes, claude_report, steps, error) -> Path:
-    """Add a "Manual fix round N" section to migration-notes/<module>.md and a summary line."""
+TODO_HEADING = re.compile(r"^#{2,4}\s*Remaining TODOs", re.I)
+BULLET = re.compile(r"^(\s*[-*]\s+)(.*)$")
+
+
+def _todo_items(lines: list[str]) -> list[list[int]]:
+    """Line numbers of each top-level item in every "Remaining TODOs" list of a module report.
+
+    An item is its bullet line plus the indented lines under it. Lists inside <details> (earlier
+    auto-fix runs, superseded by the latest report) are skipped."""
+    items, in_todos, in_details = [], False, False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("<details"):
+            in_details = True
+        elif line.lstrip().startswith("</details"):
+            in_details = False
+        if line.startswith("#"):
+            in_todos = bool(TODO_HEADING.match(line)) and not in_details
+        elif in_todos and line.strip():
+            if line[0] in "-*" and BULLET.match(line):
+                items.append([i])
+            elif line[0].isspace() and items and items[-1][-1] == i - 1:
+                items[-1].append(i)
+            else:
+                in_todos = False
+    return items
+
+
+def _is_open(line: str) -> bool:
+    body = BULLET.match(line).group(2).strip()
+    return not body.startswith("~~") and body.lower().strip(" ._*\"'") not in ("none", "n/a", "")
+
+
+def open_todos(module: str) -> list[str]:
+    """The TODO items of migration-notes/<module>.md that are not struck through yet."""
+    path = config.NOTES_DIR / f"{module}.md"
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return ["\n".join(lines[n] for n in item) for item in _todo_items(lines) if _is_open(lines[item[0]])]
+
+
+def _strike(line: str) -> str:
+    m = BULLET.match(line)
+    head, body = (m.group(1), m.group(2)) if m else (line[:len(line) - len(line.lstrip())], line.strip())
+    return f"{head}~~{body.strip()}~~" if body.strip() else line
+
+
+def strike_todos(text: str, resolved: list[str], rnd: int) -> str:
+    """Strike through the TODO items (as returned by open_todos) that a fix round resolved."""
+    lines = text.splitlines()
+    wanted = {r.splitlines()[0] for r in resolved}
+    for item in _todo_items(lines):
+        if lines[item[0]] in wanted and _is_open(lines[item[0]]):
+            wanted.discard(lines[item[0]])
+            for n in item:
+                lines[n] = _strike(lines[n])
+            lines[item[0]] += f" _(resolved in manual fix round {rnd})_"
+    return "\n".join(lines) + "\n"
+
+
+def append_manual_fix(*, job, module, rnd, status, notes, claude_report, steps, error,
+                      resolved: list[str] | None = None) -> Path:
+    """Add a "Manual fix round N" section to migration-notes/<module>.md and a summary line.
+
+    If the round passed, the earlier TODO items Claude says it resolved are struck through."""
     path = config.NOTES_DIR / f"{module}.md"
     text = path.read_text(encoding="utf-8") if path.exists() else f"# `{module}`\n"
+    resolved = resolved if status == "passed" else []
+    if resolved:
+        text = strike_todos(text, resolved, rnd)
     checks = [f"- {s['label']}: **{s['status']}**" + (f" — {s['summary']}" if s.get("summary") else "")
               for s in steps if s["id"] in ("static", "install", "test", "fix")]
+    report = re.sub(r"\n?##\s*Resolved TODOs\s*\n.*?(?=\n##\s|\Z)", "", claude_report or "",
+                    flags=re.S | re.I).strip()
     section = [f"## Manual fix round {rnd}", "",
                f"- **Result:** {status.upper()}" + (f" — {error}" if error else ""),
                f"- **Date:** {time.strftime('%Y-%m-%d %H:%M')}", "",
                "### What the tester reported", "", notes.strip() or "_No notes._", "",
-               "### Claude's report", "", (claude_report or "_No report._").strip(), "",
-               "### Checks after the fix", "", *checks, ""]
+               "### Claude's report", "", report or "_No report._", ""]
+    if resolved:
+        section += ["### Earlier TODOs resolved (struck through above)", "",
+                    *(BULLET.sub(r"- \2", r.splitlines()[0]) for r in resolved), ""]
+    section += ["### Checks after the fix", "", *checks, ""]
     path.write_text(text.rstrip() + "\n\n" + "\n".join(section), encoding="utf-8")
     line = (f"- {time.strftime('%Y-%m-%d %H:%M')} — `{module}` {job['source_version']} → "
             f"{job['target_version']}: manual fix round {rnd} **{status}** (job `{job['id']}`) — "

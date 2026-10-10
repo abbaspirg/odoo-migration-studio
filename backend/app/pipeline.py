@@ -155,8 +155,9 @@ Reply with the same report format (## Changes made / ## Remaining TODOs / Needs 
 the whole migration so far."""
 
 
-def manual_fix_prompt(tgt_ver, notes: str, server_log: str) -> str:
+def manual_fix_prompt(tgt_ver, notes: str, server_log: str, todos: list[str]) -> str:
     log = server_log.strip() or "(no ERROR lines in the server log: the problem only shows in the browser)"
+    todo_block = "\n".join(f"[T{i}] {t}" for i, t in enumerate(todos, 1)) or "(none)"
     return f"""A person installed your migrated module on a real Odoo {tgt_ver} server and clicked through it.
 The automatic checks had passed, but they found problems.
 
@@ -174,11 +175,17 @@ confirm the correct API, templates, assets and JS imports, and compare with the 
 leave unrelated code alone. Do not run odoo-bin: the backend re-runs static checks, install and
 tests when you finish, and the tester will check again.
 
+## Open TODOs from earlier reports
+{todo_block}
+
 Reply in exactly this format:
 ## Changes made
 - <one line per change, with file names>
 ## Remaining TODOs / Needs review
 - <anything you could not verify or finish, or "None">
+## Resolved TODOs
+- <the IDs from "Open TODOs from earlier reports" that the module now fully satisfies, e.g. "T1, T3";
+  only items you fixed and checked, not ones that still need review; or "None">
 ## Rule suggestion
 - <one general rule for future migrations that would have prevented this mistake, written for any
   module and verified against the Odoo {tgt_ver} source; or "None" if it was specific to this module>
@@ -191,6 +198,12 @@ def rule_suggestion(report: str) -> str:
         return ""
     text = re.sub(r"^\s*[-*]\s*", "", m.group(1).strip()).strip()
     return "" if text.lower().strip(" ._*\"'") in ("none", "n/a", "") else text
+
+
+def resolved_todos(report: str, todos: list[str]) -> list[str]:
+    m = re.search(r"##\s*Resolved TODOs\s*\n(.*?)(?=\n##\s|\Z)", report or "", re.S | re.I)
+    ids = {int(n) for n in re.findall(r"\bT(\d+)\b", m.group(1))} if m else set()
+    return [t for i, t in enumerate(todos, 1) if i in ids]
 
 
 def manual_round(log_dir: Path) -> int:
@@ -520,18 +533,20 @@ class ModulePipeline:
         db.update_module(self.job_id, self.module, manual_fix=info, error=None)
         events.publish("manual_fix", info, job_id=self.job_id, module=self.module)
         self.set_module_status("running")
-        status, error = "failed", None
+        status, error, resolved = "failed", None, []
         claude_md_log = self.log_dir / "CLAUDE.md"           # session context, moved aside by the report
         try:
             if claude_md_log.exists():
                 shutil.copy(claude_md_log, self.out / "CLAUDE.md")
             self.source_fp = await asyncio.to_thread(static_checks.fingerprint, self.source_module)
             self.set_step("fix", "running", f"{intro}: Claude fixing what you reported")
-            prompt = manual_fix_prompt(self.tgt_ver, notes, server_log)
+            todos = await asyncio.to_thread(reports.open_todos, self.module)
+            prompt = manual_fix_prompt(self.tgt_ver, notes, server_log, todos)
             (self.log_dir / f"prompt_{label}.txt").write_text(prompt)
             res = await self.run_claude(prompt, label)
             info["report"] = res["result_text"] or ""
             info["rule_suggestion"] = rule_suggestion(info["report"])
+            resolved = resolved_todos(info["report"], todos)
             if not res["ok"] and not res["session_id"]:
                 raise StepFailed("fix", f"Claude run failed (exit {res['returncode']}, "
                                         f"{res['subtype'] or 'no result'})")
@@ -561,7 +576,7 @@ class ModulePipeline:
         try:
             await asyncio.to_thread(reports.append_manual_fix, job=self.job, module=self.module,
                                     rnd=rnd, status=status, notes=notes, claude_report=info["report"],
-                                    steps=self.steps, error=error)
+                                    steps=self.steps, error=error, resolved=resolved)
         except Exception as exc:          # noqa: BLE001 - the round's result matters more than the note
             (self.log_dir / f"report_{label}_error.txt").write_text(f"{exc}\n")
         await self.do_cleanup()
