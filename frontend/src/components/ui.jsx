@@ -108,3 +108,24 @@ export function ErrorBox({ children }) {
 export function Empty({ children }) {
   return <div className="py-10 text-center text-sm text-zinc-500">{children}</div>;
 }
+
+const EDITION_HELP = {
+  auto: "Community, unless the module depends on an enterprise module",
+  community: "Odoo Community only: enterprise code is left out",
+  enterprise: "Community + enterprise addons",
+};
+
+/* Which Odoo edition the install test, unit tests or manual server run on. */
+export function EditionSelect({ id, value, onChange, enterpriseAvailable = true, compact = false }) {
+  return (
+    <label className={`flex ${compact ? "items-center gap-2" : "flex-col gap-1"} text-sm`}>
+      <span className={compact ? "" : "text-zinc-300"}>Edition</span>
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={compact ? "py-1 text-xs" : ""}>
+        <option value="auto">Auto</option>
+        <option value="community">Community only</option>
+        <option value="enterprise" disabled={!enterpriseAvailable}>Enterprise{enterpriseAvailable ? "" : " (no enterprise code)"}</option>
+      </Select>
+      {!compact && <span className="text-xs text-zinc-500">{EDITION_HELP[value]}</span>}
+    </label>
+  );
+}

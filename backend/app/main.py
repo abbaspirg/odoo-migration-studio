@@ -203,6 +203,10 @@ def _validate_job(req: JobRequest):
         _bad(f"Odoo {req.target_version} community source is missing (Versions & Sources)")
     if not sources.venv_python(req.target_version):
         _bad(f"No Python venv for Odoo {req.target_version} (Versions & Sources)")
+    if req.options.get("edition", "auto") not in odoo_runner.EDITIONS:
+        _bad("Edition must be auto, community or enterprise")
+    if req.options.get("edition") == "enterprise" and not sources.enterprise_path(req.target_version):
+        _bad(f"No Odoo {req.target_version} enterprise code (upload it in Versions & Sources)")
     src = Path(req.source_dir)
     for m in req.modules:
         if not (src / m / "__manifest__.py").is_file():
@@ -343,6 +347,7 @@ def download(job_id: str):
 class ManualStart(BaseModel):
     fresh: bool = False
     demo: bool = False
+    edition: str = "auto"
 
 
 class ManualResult(BaseModel):
@@ -361,7 +366,7 @@ async def manual_start(job_id: str, module: str, body: ManualStart):
     if mod["status"] in ("running", "queued"):
         _bad("Wait until the pipeline has finished this module")
     try:
-        return await manual.start(job, module, fresh=body.fresh, demo=body.demo)
+        return await manual.start(job, module, fresh=body.fresh, demo=body.demo, edition=body.edition)
     except (ValueError, RuntimeError) as exc:
         _bad(str(exc))
 
@@ -469,6 +474,7 @@ class NewModule(BaseModel):
     description: str
     depends_hint: str = ""
     attachments: list[str] = []
+    edition: str = "auto"
 
 
 class PlanRevise(BaseModel):
@@ -504,8 +510,12 @@ async def create_module(body: NewModule):
     out = config.new_module_dir_for(version) / name
     if out.exists() and not db.output_owned_by_studio(str(out.resolve())):
         _bad(f"{out} already exists and wasn't created by the studio")
+    if body.edition not in odoo_runner.EDITIONS:
+        _bad("Edition must be auto, community or enterprise")
+    if body.edition == "enterprise" and not sources.enterprise_path(version):
+        _bad(f"No Odoo {version} enterprise code (upload it in Versions & Sources)")
     job_id = pipeline.create_module_job(name, version, body.description, body.depends_hint,
-                                        _attachments(body.attachments))
+                                        _attachments(body.attachments), body.edition)
     return db.get_job(job_id)
 
 

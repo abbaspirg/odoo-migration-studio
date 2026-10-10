@@ -100,18 +100,85 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def addons_path(target: str, output_dir: Path) -> str:
+# ---------------------------------------------------------------- community vs enterprise
+EDITIONS = ("auto", "community", "enterprise")
+
+
+def enterprise_names(version: str) -> set[str]:
+    ent = sources.enterprise_path(version)
+    return {p.parent.name for p in ent.glob("*/__manifest__.py")} if ent else set()
+
+
+def enterprise_deps(version: str, module_dir: Path, roots: list[Path]) -> list[str]:
+    """Enterprise modules ``module_dir`` depends on, directly or through custom modules in ``roots``."""
+    from .modules import read_manifest
+    ent = enterprise_names(version)
+    found, seen, todo = set(), set(), [module_dir]
+    while todo:
+        d = todo.pop()
+        try:
+            deps = read_manifest(d).get("depends", [])
+        except Exception:                 # noqa: BLE001 - unreadable manifests fail elsewhere
+            continue
+        for dep in deps:
+            if dep in seen:
+                continue
+            seen.add(dep)
+            if dep in ent:
+                found.add(dep)
+            else:                         # a custom module may pull enterprise in
+                todo += [r / dep for r in roots if (r / dep / "__manifest__.py").is_file()]
+    return sorted(found)
+
+
+def resolve_edition(edition: str, version: str, module_dir: Path, roots: list[Path]) -> dict:
+    """{"enterprise": bool, "label": ..., "needs": [...], "conflict": str|None} for one module."""
+    available = bool(sources.enterprise_path(version))
+    needs = enterprise_deps(version, module_dir, roots) if available else []
+    edition = edition if edition in EDITIONS else "auto"
+    if edition == "enterprise" and available:
+        use = True
+    elif edition == "community":
+        use = False
+    else:
+        use = bool(needs)
+    conflict = None
+    if edition == "community" and needs:
+        conflict = (f"depends on enterprise modules ({', '.join(needs)}) but the edition is set to "
+                    "Community only")
+    elif edition == "enterprise" and not available:
+        conflict = f"the edition is set to Enterprise but there is no Odoo {version} enterprise code"
+    return {"enterprise": use, "label": "enterprise" if use else "community", "needs": needs,
+            "conflict": conflict}
+
+
+def installed_enterprise(settings: dict, dbname: str, version: str) -> bool | None:
+    """Whether any enterprise module is installed in the database (None if it can't be read)."""
+    names = enterprise_names(version)
+    try:
+        conn = _pg_connect(settings, dbname)
+        with conn.cursor() as cr:
+            cr.execute("SELECT name FROM ir_module_module WHERE state = 'installed'")
+            installed = {r[0] for r in cr.fetchall()}
+        conn.close()
+        return bool(installed & names)
+    except Exception:                 # noqa: BLE001
+        return None
+
+
+def addons_path(target: str, output_dir: Path, enterprise: bool = True) -> str:
     paths = [str(p) for p in sources.community_addons_paths(target)
              if not p.as_posix().endswith("odoo/addons")]
     ent = sources.enterprise_path(target)
-    if ent:
+    if ent and enterprise:
         paths.append(str(ent))
     paths.append(str(output_dir))
     return ",".join(paths)
 
 
 def build_command(target: str, output_dir: Path, dbname: str, module: str, settings: dict,
-                  mode: str, http_port: int | None = None, with_demo: bool = False) -> list[str]:
+                  mode: str, http_port: int | None = None, with_demo: bool = False,
+                  enterprise: bool = True) -> list[str]:
     """mode: install | test | manual (serve, module already installed) | manual_install.
 
     with_demo loads demo data; Odoo only applies it when it creates the database."""
@@ -120,7 +187,7 @@ def build_command(target: str, output_dir: Path, dbname: str, module: str, setti
     if not root or not py:
         raise RuntimeError(f"Odoo {target} source or venv missing (see Versions & Sources)")
     cmd = [str(py), str(root / "odoo-bin"), "-d", dbname,
-           f"--addons-path={addons_path(target, output_dir)}",
+           f"--addons-path={addons_path(target, output_dir, enterprise)}",
            f"--db_host={settings['db_host']}", f"--db_port={settings['db_port']}",
            f"--db_user={settings['db_user']}",
            f"--http-port={http_port or free_port()}", "--http-interface=127.0.0.1"]
@@ -233,10 +300,10 @@ class OdooRun:
 
 
 async def run_step(job_id, module, step, attempt, log_dir, target, output_dir, dbname,
-                   settings, token) -> dict:
+                   settings, token, enterprise: bool = True) -> dict:
     """Install or test ``module``; returns a verdict dict."""
     run = OdooRun(job_id, module, step, attempt, log_dir)
-    cmd = build_command(target, output_dir, dbname, module, settings, step)
+    cmd = build_command(target, output_dir, dbname, module, settings, step, enterprise=enterprise)
     timeout = float(settings.get("install_timeout" if step == "install" else "test_timeout") or 1800)
     rc = await run.run(cmd, token, timeout)
     state = await asyncio.to_thread(module_state, settings, dbname, module)

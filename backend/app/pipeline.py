@@ -212,17 +212,17 @@ def rule_suggestion(report: str) -> str:
 
 
 # ---------------------------------------------------------------- new modules
-def known_modules(version: str, output_dir: Path) -> set[str]:
+def known_modules(version: str, output_dir: Path, enterprise: bool = True) -> set[str]:
     """Module names a new module may depend on: community, enterprise and the output folder."""
     roots = list(sources.community_addons_paths(version))
-    if ent := sources.enterprise_path(version):
+    if enterprise and (ent := sources.enterprise_path(version)):
         roots.append(ent)
     roots.append(output_dir)
     return {p.parent.name for r in roots if r.is_dir() for p in r.glob("*/__manifest__.py")}
 
 
-def plan_dirs(version: str, output_dir: Path) -> list[tuple[str, Path]]:
-    dirs = ask._scope_dirs(version, {"enterprise": True})
+def plan_dirs(version: str, output_dir: Path, enterprise: bool = True) -> list[tuple[str, Path]]:
+    dirs = ask._scope_dirs(version, {"enterprise": enterprise})
     if (config.REFERENCE_MODULE / "__manifest__.py").is_file():
         dirs.append(("house-style reference module", config.REFERENCE_MODULE.resolve()))
     if output_dir.is_dir():
@@ -230,8 +230,10 @@ def plan_dirs(version: str, output_dir: Path) -> list[tuple[str, Path]]:
     return dirs
 
 
-def plan_system_prompt(version: str, output_dir: Path) -> str:
-    dirs = "\n".join(f"- {label}: `{p}`" for label, p in plan_dirs(version, output_dir))
+def plan_system_prompt(version: str, output_dir: Path, enterprise: bool = True) -> str:
+    dirs = "\n".join(f"- {label}: `{p}`" for label, p in plan_dirs(version, output_dir, enterprise))
+    ent_rule = ("Use enterprise modules only when a feature needs them, and say so." if enterprise else
+                "The module must work on Odoo Community: depend on community modules only.")
     return f"""You plan new Odoo {version} modules inside Odoo Migration Studio. You can only read code;
 the module is written later, after the user approves your plan. Folders you can read:
 
@@ -243,7 +245,7 @@ from this version's source, never ones you remember from other versions. Prefer 
 Odoo over rebuilding what it already does.
 
 Dependencies: choose them from what the features actually use. Each one must be a module in the
-folders above. Use enterprise modules only when a feature needs them, and say so."""
+folders above. {ent_rule}"""
 
 
 def plan_prompt(module: str, version: str, description: str, depends_hint: str,
@@ -372,6 +374,8 @@ class ModulePipeline:
         self.settings = db.get_settings()
         self.options = job["options"]
         self.kind = self.options.get("kind", "migrate")
+        self.edition = self.options.get("edition", "auto")      # auto | community | enterprise
+        self.enterprise = True
         self.max_attempts = int(self.options.get("max_fix_attempts",
                                                  self.settings["max_fix_attempts"]))
         self.steps = [{"id": s, "label": label, "status": "pending", "started_at": None,
@@ -529,7 +533,8 @@ class ModulePipeline:
 
     async def do_static(self, attempt: int) -> dict:
         self.set_step("static", "running")
-        known = (await asyncio.to_thread(known_modules, self.tgt_ver, Path(self.job["output_dir"]))
+        known = (await asyncio.to_thread(known_modules, self.tgt_ver, Path(self.job["output_dir"]),
+                                         self.edition != "community")
                  if self.kind == "create" else None)
         res = await static_checks.run(self.out, self.tgt_ver, sources.venv_python(self.tgt_ver), known)
         self.set_step("static", "passed" if res["ok"] else "failed",
@@ -543,16 +548,24 @@ class ModulePipeline:
         self.dbname = f"mig_{self.module}_{time.strftime('%Y%m%d%H%M%S')}"[:63].lower()
         db.update_module(self.job_id, self.module, db_name=self.dbname)
 
+    def edition_roots(self) -> list[Path]:
+        """Folders with custom modules this one may depend on (for the enterprise check)."""
+        roots = [Path(self.job["output_dir"]), config.output_dir_for(self.tgt_ver),
+                 config.new_module_dir_for(self.tgt_ver)]
+        return list(dict.fromkeys(r for r in roots if r.is_dir()))
+
     async def do_odoo(self, sid: str, attempt: int) -> dict:
         self.set_step(sid, "running", "", attempt=attempt)
         v = await odoo_runner.run_step(self.job_id, self.module, sid, attempt, self.log_dir,
                                        self.tgt_ver, Path(self.job["output_dir"]), self.dbname,
-                                       self.settings, self.token)
+                                       self.settings, self.token, enterprise=self.enterprise)
+        edition = "enterprise" if self.enterprise else "community"
+        v["edition"] = edition
         if v["ok"]:
             if sid == "test":
-                summary = v.get("result_line") or "passed"
+                summary = f"{v.get('result_line') or 'passed'} ({edition})"
             else:
-                summary = f"Installed in {self.dbname}"
+                summary = f"Installed in {self.dbname} ({edition})"
         else:
             summary = "; ".join(v["problems"])[:300]
         self.set_step(sid, "passed" if v["ok"] else "failed", summary,
@@ -568,6 +581,12 @@ class ModulePipeline:
             self.set_step("install", "skipped", "static checks failed")
             self.set_step("test", "skipped", "static checks failed")
             return [("Static checks", "\n".join(st["problems"]))]
+        ed = await asyncio.to_thread(odoo_runner.resolve_edition, self.edition, self.tgt_ver, self.out,
+                                     self.edition_roots())
+        if ed["conflict"]:                     # a setting to change, not something for Claude to fix
+            raise StepFailed("install", f"{self.module} {ed['conflict']}. Change the edition, or "
+                                        "remove the enterprise dependency.")
+        self.enterprise = ed["enterprise"]
         await self.new_db()
         inst = await self.do_odoo("install", attempt)
         if not inst["ok"]:
@@ -719,8 +738,9 @@ class ModulePipeline:
         cwd = config.DATA_DIR / "plans" / self.job_id          # empty: no project CLAUDE.md
         cwd.mkdir(parents=True, exist_ok=True)
         files = files or []
-        read_only = {"system_prompt": plan_system_prompt(self.tgt_ver, out_dir),
-                     "dirs": [p for _, p in plan_dirs(self.tgt_ver, out_dir)]
+        ent = self.edition != "community"
+        read_only = {"system_prompt": plan_system_prompt(self.tgt_ver, out_dir, ent),
+                     "dirs": [p for _, p in plan_dirs(self.tgt_ver, out_dir, ent)]
                      + attachments.dirs(self.files + files),
                      "max_turns": int(self.settings.get("ask_max_turns") or 30)}
         prompt = revise_prompt(feedback, files) if revising else plan_prompt(
@@ -935,14 +955,16 @@ def start_manual_fix(job: dict, module: str, notes: str, files: list[dict] | Non
             events.publish("job", {"status": status}, job_id=job_id)
         if info.get("status") == "passed":
             # wait for the old server to release before starting a fresh one, with the same demo setting
-            demo = bool((manual.get_server(job_id, module) or {}).get("demo"))
+            prev = manual.get_server(job_id, module) or {}
+            demo = bool(prev.get("demo"))
             for _ in range(40):
                 s = manual.get_server(job_id, module)
                 if not s or s["status"] in ("stopped", "crashed"):
                     break
                 await asyncio.sleep(0.5)
             try:
-                await manual.start(db.get_job(job_id), module, fresh=True, demo=demo)
+                await manual.start(db.get_job(job_id), module, fresh=True, demo=demo,
+                                   edition=prev.get("edition_choice", "auto"))
             except (ValueError, RuntimeError) as exc:
                 events.publish("manual_fix", {**info, "restart_error": str(exc)}, job_id=job_id, module=module)
 
@@ -1010,14 +1032,15 @@ def start_build(job: dict, module: str, plan_text: str) -> None:
 
 
 def create_module_job(module: str, version: str, description: str, depends_hint: str,
-                      files: list[dict] | None = None) -> str:
+                      files: list[dict] | None = None, edition: str = "auto") -> str:
     """A job that plans, then (after approval) builds a new module in <workspace>/v<N>-new/."""
     NEW_MODULE_BASE.mkdir(parents=True, exist_ok=True)
     out_dir = config.new_module_dir_for(version)
     out_dir.mkdir(parents=True, exist_ok=True)
     job_id = db.create_job(version, version, NEW_MODULE_BASE, out_dir, [(module, [])],
                            {"kind": "create", "description": description.strip(),
-                            "depends_hint": depends_hint.strip(), "attachments": files or []})
+                            "depends_hint": depends_hint.strip(), "attachments": files or [],
+                            "edition": edition})
     steps = [{"id": s, "label": label, "status": "pending", "started_at": None, "finished_at": None,
               "duration": None, "summary": "", "details": {}} for s, label in STEPS_CREATE]
     db.update_module(job_id, module, steps=steps, plan={"round": 0, "status": "planning"})

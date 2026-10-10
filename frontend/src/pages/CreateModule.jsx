@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, useFetch } from "../api.js";
-import { Button, Card, ErrorBox, Input, Select } from "../components/ui.jsx";
+import { Button, Card, EditionSelect, ErrorBox, Input, Select } from "../components/ui.jsx";
 import { AttachBar, useAttach } from "../components/Attachments.jsx";
 
 const STEPS = [
@@ -20,6 +20,7 @@ export default function CreateModule() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const att = useAttach();
+  const [edition, setEdition] = useState("auto");
   useEffect(() => { if (options?.length && !version) setVersion(options[options.length - 1].version); }, [options]);
   const opt = options?.find((o) => o.version === version);
   const nameOk = /^[a-z][a-z0-9_]{1,62}$/.test(module);
@@ -28,7 +29,7 @@ export default function CreateModule() {
     e.preventDefault();
     setBusy(true); setErr(null);
     try {
-      const job = await api("/api/create", { method: "POST", body: { module, version, description, depends_hint: depends, attachments: att.ids } });
+      const job = await api("/api/create", { method: "POST", body: { module, version, description, depends_hint: depends, attachments: att.ids, edition } });
       nav(`/jobs/${job.id}`);
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
@@ -76,6 +77,10 @@ export default function CreateModule() {
           <Input id="new-module-depends" className="w-full font-mono" value={depends} onChange={(e) => setDepends(e.target.value)} placeholder="e.g. sale_stock, website_sale" />
           <div className="text-xs text-zinc-500">Claude adds or drops dependencies to match the features{opt?.enterprise ? ", including enterprise modules when a feature needs them" : ""}. Each one is checked against Odoo {version || "…"}.</div>
         </label>
+        <div className="mt-4 max-w-sm">
+          <EditionSelect id="new-module-edition" value={edition} onChange={setEdition} enterpriseAvailable={!!opt?.enterprise} />
+          {edition === "community" && <div className="mt-1 text-xs text-zinc-500">The plan will use community modules only.</div>}
+        </div>
         <div className="mt-4 text-xs text-zinc-500">Output: <span className="font-mono">{opt?.output_dir}/{module || "<name>"}</span></div>
       </Card>
       {err && <ErrorBox>{err}</ErrorBox>}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, fmtTime, useEvents } from "../api.js";
-import { Badge, Button, ErrorBox } from "./ui.jsx";
+import { Badge, Button, EditionSelect, ErrorBox } from "./ui.jsx";
 import { AttachBar, AttachmentList, useAttach } from "./Attachments.jsx";
 
 const STATUS = { starting: "running", ready: "passed", stopping: "cancelled", stopped: "skipped", crashed: "failed" };
@@ -10,6 +10,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
   const [server, setServer] = useState(null);
   const [fresh, setFresh] = useState(false);
   const [demo, setDemo] = useState(false);
+  const [edition, setEdition] = useState("auto");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [notes, setNotes] = useState("");
@@ -33,7 +34,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
     setBusy(true); setErr(null);
     try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
-  const start = run(async () => { setServer(await api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "POST", body: { fresh, demo } })); onShowLog?.(); });
+  const start = run(async () => { setServer(await api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "POST", body: { fresh, demo, edition } })); onShowLog?.(); });
   const stop = run(() => api(`/api/jobs/${jobId}/modules/${module}/manual`, { method: "DELETE" }));
   const record = (result) => run(async () => setSaved(await api(`/api/jobs/${jobId}/modules/${module}/manual-result`, { method: "POST", body: { result, notes } })))();
 
@@ -68,6 +69,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
             <input type="checkbox" className="accent-violet-500" checked={demo} onChange={(e) => setDemo(e.target.checked)} />
             demo data (only reuses a database that also has demo data, else creates one)
           </label>
+          <EditionSelect id="manual-edition" compact value={edition} onChange={setEdition} />
           <Button variant="primary" className="w-full" disabled={busy || pipelineBusy} onClick={start}>
             {pipelineBusy ? "Available when the pipeline finishes" : "Start Odoo for manual test"}
           </Button>
@@ -90,6 +92,7 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
             <span>login</span><span className="font-mono text-zinc-200">{server.login} / {server.password}</span>
             <span>database</span><span className="break-all font-mono">{server.db}</span>
             <span>demo data</span><span>{server.demo ? "yes" : "no"}</span>
+            {server.edition && <><span>edition</span><span>{server.edition}{server.edition_choice === "auto" ? " (auto)" : ""}</span></>}
             <span>started</span><span>{fmtTime(server.started_at)}</span>
           </div>
           <Button variant="danger" className="w-full" disabled={busy || server.status === "stopping"} onClick={stop}>Stop server</Button>

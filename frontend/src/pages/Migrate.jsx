@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, useFetch } from "../api.js";
-import { Button, Card, ErrorBox, Input, Select } from "../components/ui.jsx";
+import { Button, Card, EditionSelect, ErrorBox, Input, Select } from "../components/ui.jsx";
 import { DepChips } from "../components/ModuleTable.jsx";
 
 function topoOrder(selected, modules) {
@@ -27,7 +27,7 @@ export default function Migrate({ status }) {
   const [scan, setScan] = useState(null);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(new Set());
-  const [opts, setOpts] = useState({ keep_db: false, overwrite: false, max_fix_attempts: null });
+  const [opts, setOpts] = useState({ keep_db: false, overwrite: false, max_fix_attempts: null, edition: "auto" });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +46,7 @@ export default function Migrate({ status }) {
 
   const start = async () => {
     setBusy(true); setErr(null);
-    const options = { keep_db: opts.keep_db, overwrite: opts.overwrite };
+    const options = { keep_db: opts.keep_db, overwrite: opts.overwrite, edition: opts.edition };
     if (opts.max_fix_attempts != null && opts.max_fix_attempts !== "") options.max_fix_attempts = Number(opts.max_fix_attempts);
     try {
       const job = await api("/api/jobs", { method: "POST", body: { source_version: src, target_version: tgt, source_dir: scan.path, modules: order, options } });
@@ -113,6 +113,7 @@ export default function Migrate({ status }) {
           </Card>
           <Card title="Options">
             <div className="space-y-3 text-sm">
+              <EditionSelect id="migrate-edition" value={opts.edition} onChange={(v) => setOpts({ ...opts, edition: v })} />
               <label className="flex items-center gap-2"><input type="checkbox" className="accent-violet-500" checked={opts.keep_db} onChange={(e) => setOpts({ ...opts, keep_db: e.target.checked })} /> Keep test databases</label>
               <label className="flex items-start gap-2"><input type="checkbox" className="mt-1 accent-violet-500" checked={opts.overwrite} onChange={(e) => setOpts({ ...opts, overwrite: e.target.checked })} />
                 <span>Overwrite existing output<br /><span className="text-xs text-zinc-500">Existing folders are moved to migration-studio/data/backups first.</span></span></label>
