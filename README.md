@@ -118,6 +118,21 @@ Then in the UI:
 5. **Download zip** gets the migrated modules and their reports. **Jobs** lists history and can
    re-run failed modules.
 
+### Community or enterprise
+
+The **Edition** option (Migration, New module, Manual test) decides which Odoo the module is
+installed and tested on:
+
+- **Auto** (default): Odoo Community, unless the module depends on an enterprise module, directly
+  or through one of your custom modules.
+- **Community only**: the enterprise addons are left off the addons path. A module that needs
+  enterprise fails the install step with a clear message; it isn't sent to Claude.
+- **Enterprise**: community plus the enterprise addons you uploaded.
+
+Enterprise has many auto-install modules (`web_enterprise` and others), so testing a community
+module with enterprise on the path doesn't show how it behaves on Community. The install and test
+steps say which edition they used, and Manual test only reuses a database of the same edition.
+
 ### Attaching files
 
 Every box whose text goes to Claude takes attachments: the module description on **New module**,
