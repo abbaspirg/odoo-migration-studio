@@ -6,11 +6,13 @@ import Migrate from "./pages/Migrate.jsx";
 import JobDashboard from "./pages/JobDashboard.jsx";
 import History from "./pages/History.jsx";
 import Settings from "./pages/Settings.jsx";
+import Ask from "./pages/Ask.jsx";
 
 const NAV = [
   ["/sources", "Versions & Sources"],
   ["/migrate", "Migration"],
   ["/history", "Jobs"],
+  ["/ask", "Ask Odoo"],
   ["/settings", "Settings"],
 ];
 
@@ -76,6 +78,8 @@ export default function App() {
           <Route path="/migrate" element={<Migrate status={status} />} />
           <Route path="/jobs/:jobId" element={<JobDashboard />} />
           <Route path="/history" element={<History />} />
+          <Route path="/ask" element={<Ask status={status} />} />
+          <Route path="/ask/:threadId" element={<Ask status={status} />} />
           <Route path="/settings" element={<Settings onSaved={recheck} />} />
         </Routes>
       </main>

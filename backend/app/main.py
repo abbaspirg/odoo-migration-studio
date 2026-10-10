@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (claude_runner, config, db, diffs, events, manual, modules, odoo_runner,
+from . import (ask, claude_runner, config, db, diffs, events, manual, modules, odoo_runner,
                pipeline, reports, sources)
 
 CLAUDE_STATUS: dict = {}
@@ -33,10 +33,13 @@ async def refresh_claude_status() -> dict:
 async def lifespan(_app: FastAPI):
     sources.init()
     db.conn()
+    ask.init()
     pipeline.recover_interrupted()
     await refresh_claude_status()
     yield
     manual.stop_all()
+    for thread_id in list(ask.RUNNING):
+        ask.cancel(thread_id)
     for job_id in list(pipeline.RUNNING):
         pipeline.cancel_job(job_id)
 
@@ -408,6 +411,99 @@ def add_rule(body: RuleIn):
     except ValueError as exc:
         _bad(str(exc))
     return {"ok": True, "path": str(path)}
+
+
+# ---------------------------------------------------------------- Ask Odoo
+class AskNew(BaseModel):
+    version: str
+    question: str
+    enterprise: bool = False
+    custom: bool = False
+
+
+class AskFollowUp(BaseModel):
+    question: str
+
+
+def _thread_or_404(thread_id: str) -> dict:
+    thread = ask.get_thread(thread_id)
+    if not thread:
+        _bad("Question not found", 404)
+    return thread
+
+
+def _claude_ready() -> None:
+    if not CLAUDE_STATUS.get("logged_in"):
+        _bad("Claude Code is not available or not logged in (see banner)")
+
+
+@app.get("/api/ask/options")
+def ask_options():
+    return ask.options()
+
+
+@app.get("/api/ask/threads")
+def ask_threads():
+    return ask.list_threads()
+
+
+@app.post("/api/ask/threads")
+async def ask_new(body: AskNew):
+    _claude_ready()
+    if not body.question.strip():
+        _bad("Write a question first")
+    try:
+        return ask.create_thread(body.version, {"enterprise": body.enterprise, "custom": body.custom},
+                                 body.question)
+    except ValueError as exc:
+        _bad(str(exc))
+
+
+@app.get("/api/ask/threads/{thread_id}")
+def ask_thread(thread_id: str):
+    return _thread_or_404(thread_id)
+
+
+@app.post("/api/ask/threads/{thread_id}/messages")
+async def ask_follow_up(thread_id: str, body: AskFollowUp):
+    _thread_or_404(thread_id)
+    _claude_ready()
+    try:
+        ask.ask(thread_id, body.question)
+    except ValueError as exc:
+        _bad(str(exc))
+    return ask.get_thread(thread_id)
+
+
+@app.post("/api/ask/threads/{thread_id}/cancel")
+def ask_cancel(thread_id: str):
+    if not ask.cancel(thread_id):
+        _bad("Claude isn't answering anything in this thread")
+    return {"ok": True}
+
+
+@app.delete("/api/ask/threads/{thread_id}")
+def ask_delete(thread_id: str):
+    _thread_or_404(thread_id)
+    try:
+        ask.delete_thread(thread_id)
+    except ValueError as exc:
+        _bad(str(exc))
+    return {"ok": True}
+
+
+@app.get("/api/ask/threads/{thread_id}/events")
+def ask_events(thread_id: str):
+    _thread_or_404(thread_id)
+    return events.replay(ask.EVENT_JOB, thread_id)
+
+
+@app.get("/api/ask/threads/{thread_id}/source")
+def ask_source(thread_id: str, path: str, line: int = 1):
+    try:
+        return ask.source_snippet(_thread_or_404(thread_id), path, line)
+    except ValueError as exc:
+        _bad(str(exc))
 
 
 # ---------------------------------------------------------------- test databases

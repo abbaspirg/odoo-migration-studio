@@ -118,6 +118,21 @@ Then in the UI:
 5. **Download zip** gets the migrated modules and their reports. **Jobs** lists history and can
    re-run failed modules.
 
+### Ask Odoo
+
+**Ask Odoo** answers functional questions ("When does a sales order create its delivery?",
+"What does the lock date block?") from the Odoo source code, not from general knowledge:
+
+- Pick the Odoo version and what to search: community is always included; tick **enterprise
+  addons** (if you uploaded them) and **your custom modules**. Custom modules are the ones in the
+  modules folder and in `v<N>-migrated/` whose manifest version matches.
+- Claude runs read-only: only `Read`, `Grep` and `Glob`, confined to those folders. It can't
+  edit files or run commands.
+- Each answer cites the file and line behind each point. Click a citation to see the code.
+  What the code doesn't settle (configuration, data, runtime JS) is listed under *Not verified*.
+- Follow-up questions continue the same Claude session. Questions are kept in the studio
+  (`data/studio.db`). Each question may use up to 30 turns; change it in Settings.
+
 Check Settings first: Postgres credentials (default `odoo_studio` / `odoo_studio` on
 `127.0.0.1:5432`), concurrency, fix attempts, and Claude options (max turns, allowed tools,
 model).
@@ -225,7 +240,8 @@ Ctrl-C cancels cleanly. The report and cleanup still run.
   - The studio never writes into the modules folder, the Odoo trees or the reference module.
   - An existing output folder it didn't create is never replaced unless you tick *Overwrite*. The
     old folder is then moved to `data/backups/`, not deleted.
-- **What Claude may do.** Only the allowed tools run without a prompt. Headless mode can't ask
+- **What Claude may do.** Ask Odoo runs Claude with read-only tools only (see above). For
+  migrations, only the allowed tools run without a prompt. Headless mode can't ask
   for approval, so anything else is refused. Two things are worth knowing:
   - `acceptEdits` also auto-approves simple file commands such as `rm` and `mv` inside the module
     copy.

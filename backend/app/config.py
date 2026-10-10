@@ -77,6 +77,7 @@ DEFAULT_SETTINGS: dict = {
     "install_timeout": 1800,
     "test_timeout": 3600,
     "claude_timeout": 3600,
+    "ask_max_turns": 30,
     # version -> absolute path; empty means auto-detect
     "venvs": {},
 }

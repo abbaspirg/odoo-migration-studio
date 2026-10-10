@@ -60,7 +60,23 @@ async def cli_status() -> dict:
     return info
 
 
-def build_command(prompt: str, settings: dict, resume: str | None = None) -> list[str]:
+def build_command(prompt: str, settings: dict, resume: str | None = None,
+                  read_only: dict | None = None) -> list[str]:
+    """read_only: {"system_prompt", "dirs", "max_turns"} runs Claude with only Read/Grep/Glob,
+    confined to the working directory and `dirs`, instead of the migration setup."""
+    if read_only:
+        tools = "Read,Grep,Glob"
+        cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
+               "--tools", tools, "--allowedTools", tools, "--permission-mode", "dontAsk",
+               "--strict-mcp-config", "--max-turns", str(read_only["max_turns"]),
+               "--append-system-prompt", read_only["system_prompt"]]
+        for d in read_only["dirs"]:
+            cmd += ["--add-dir", str(d)]
+        if settings.get("claude_model"):
+            cmd += ["--model", settings["claude_model"]]
+        if resume:
+            cmd += ["--resume", resume]
+        return cmd
     rules = config.RULES_FILE.read_text(encoding="utf-8") if config.RULES_FILE.exists() else ""
     cmd = ["claude", "-p", prompt,
            "--output-format", "stream-json", "--verbose",
@@ -138,7 +154,10 @@ class ClaudeRun:
             try:
                 rel = Path(path).resolve().relative_to(module_dir.resolve()).as_posix()
             except ValueError:
-                rel = path
+                try:
+                    rel = Path(path).resolve().relative_to(config.WORKSPACE.resolve()).as_posix()
+                except ValueError:
+                    rel = path
         data = {"id": block.get("id"), "name": name, "path": rel}
         if name in ("Edit", "MultiEdit", "Write") and rel:
             self.files_touched.add(rel)
@@ -160,8 +179,9 @@ class ClaudeRun:
         return data
 
     async def run(self, prompt: str, module_dir: Path, settings: dict, token: CancelToken,
-                  env_path_prefix: str | None = None, resume: str | None = None) -> dict:
-        cmd = build_command(prompt, settings, resume)
+                  env_path_prefix: str | None = None, resume: str | None = None,
+                  read_only: dict | None = None) -> dict:
+        cmd = build_command(prompt, settings, resume, read_only)
         env = claude_env()
         if env_path_prefix:                     # `python` → the target Odoo venv
             env["PATH"] = env_path_prefix + os.pathsep + env.get("PATH", "")

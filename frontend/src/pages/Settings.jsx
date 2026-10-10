@@ -13,6 +13,7 @@ const FIELDS = [
     ["claude_allowed_tools", "--allowedTools", "text"],
     ["claude_model", "--model (blank = account default)", "text"],
     ["claude_timeout", "Timeout per run (s)", "number"],
+    ["ask_max_turns", "Ask Odoo: --max-turns per question", "number"],
   ]],
   ["PostgreSQL (test databases)", [
     ["db_host", "Host", "text"], ["db_port", "Port", "number"],
