@@ -21,7 +21,9 @@ def fingerprint(folder: Path) -> str:
     return h.hexdigest()
 
 
-async def run(module_dir: Path, target: str, python: Path | None) -> dict:
+async def run(module_dir: Path, target: str, python: Path | None,
+              known_modules: set[str] | None = None) -> dict:
+    """known_modules: when given, every manifest dependency must be one of them."""
     problems: list[str] = []
     py_files = [p for p in module_dir.rglob("*.py") if "__pycache__" not in p.parts]
     xml_files = [p for p in module_dir.rglob("*.xml")]
@@ -58,6 +60,11 @@ async def run(module_dir: Path, target: str, python: Path | None) -> dict:
         manifest_info = {"version": version, "license": manifest.get("license")}
         if not re.fullmatch(re.escape(target) + r"\.\d+\.\d+\.\d+", version):
             problems.append(f"Manifest version {version!r} must be {target}.x.y.z")
+        if known_modules is not None:
+            missing = [d for d in manifest.get("depends", []) if d not in known_modules]
+            if missing:
+                problems.append(f"Manifest depends on modules that don't exist for Odoo {target}: "
+                                + ", ".join(missing))
         for key in ("data", "demo"):
             for rel in manifest.get(key, []):
                 if not (module_dir / rel).is_file():

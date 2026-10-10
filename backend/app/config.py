@@ -91,6 +91,10 @@ def output_dir_for(target: str) -> Path:
     return WORKSPACE / f"v{major(target)}-migrated"
 
 
+def new_module_dir_for(version: str) -> Path:
+    return WORKSPACE / f"v{major(version)}-new"
+
+
 def ensure_dirs() -> None:
     for d in (DATA_DIR, UPLOADS_DIR, BACKUPS_DIR, COMMUNITY_DIR, ENTERPRISE_DIR,
               VENVS_DIR, LOGS_DIR, NOTES_DIR, DEFAULT_CUSTOM_DIR):

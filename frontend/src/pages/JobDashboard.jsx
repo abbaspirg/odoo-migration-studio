@@ -8,6 +8,7 @@ import OdooLog from "../components/OdooLog.jsx";
 import DiffView from "../components/DiffView.jsx";
 import ReportView from "../components/ReportView.jsx";
 import ManualTest from "../components/ManualTest.jsx";
+import PlanPanel from "../components/PlanPanel.jsx";
 
 const STEP_IDS = ["analyze", "copy", "claude", "static", "install", "test", "fix", "report", "cleanup"];
 const DONE = new Set(["passed", "failed", "skipped", "cancelled"]);
@@ -27,11 +28,13 @@ export default function JobDashboard() {
   const [events, setEvents] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [err, setErr] = useState(null);
+  const created = job?.options?.kind === "create";
 
   useEffect(() => {
     if (job && !selected) {
       const running = job.modules.find((m) => m.status === "running");
       setSelected((running || job.modules[0])?.module);
+      if (job.options?.kind === "create" && ["planning", "plan_ready"].includes(job.modules[0]?.status)) setTab("plan");
     }
   }, [job]);
 
@@ -72,7 +75,7 @@ export default function JobDashboard() {
   const steps = mod?.steps?.length ? mod.steps : STEP_IDS.map((id) => ({ id, label: id, status: "pending" }));
   const act = (path) => api(path, { method: "POST" }).then((r) => { reload(); return r; }).catch((e) => setErr(e.message));
   const failedCount = job.modules.filter((m) => m.status !== "passed").length;
-  const active = job.running || job.status === "running" || job.status === "queued";
+  const active = job.running || ["running", "queued", "planning"].includes(job.status);
 
   const claudeEvents = events.filter((e) => e.kind.startsWith("claude_"));
   const odooEvents = events.filter((e) => e.kind.startsWith("odoo_"));
@@ -83,11 +86,11 @@ export default function JobDashboard() {
         <Link to="/history" className="text-sm text-zinc-500 hover:text-zinc-300">Jobs /</Link>
         <span className="font-mono text-sm">{job.id}</span>
         <Badge status={job.status} />
-        <span className="text-sm text-zinc-400">Odoo {job.source_version} → {job.target_version}</span>
+        <span className="text-sm text-zinc-400">{created ? `New module · Odoo ${job.target_version}` : `Odoo ${job.source_version} → ${job.target_version}`}</span>
         <span className="text-xs text-zinc-500">{fmtTime(job.created_at)}</span>
         <div className="ml-auto flex gap-2">
           {job.running && <Button variant="danger" onClick={() => act(`/api/jobs/${jobId}/cancel`)}>Cancel job</Button>}
-          {!active && failedCount > 0 && (
+          {!created && !active && failedCount > 0 && (
             <Button onClick={() => act(`/api/jobs/${jobId}/rerun-failed`).then((j) => j && nav(`/jobs/${j.id}`))}>Re-run failed ({failedCount})</Button>
           )}
           <a href={`/api/jobs/${jobId}/download`}><Button variant="primary">Download zip</Button></a>
@@ -135,7 +138,9 @@ export default function JobDashboard() {
                 {mod.session_id && <div>session <span className="font-mono">{mod.session_id}</span></div>}
                 <div>logs <span className="font-mono">logs/{job.id}/{mod.module}/</span></div>
               </div>
-              <ManualTest jobId={jobId} mod={mod} onShowLog={() => setTab("odoo")} />
+              {!["planning", "plan_ready"].includes(mod.status) && mod.output_path && (
+                <ManualTest jobId={jobId} mod={mod} onShowLog={() => setTab("odoo")} />
+              )}
             </>
           )}
         </section>
@@ -143,13 +148,14 @@ export default function JobDashboard() {
         {/* right: tabs */}
         <section className="flex min-h-0 min-w-0 flex-col">
           <div className="flex gap-1 border-b border-zinc-800 px-2 pt-2">
-            {[["claude", `Claude activity (${claudeEvents.filter((e) => e.kind === "claude_tool").length})`], ["odoo", "Odoo log"], ["diff", "Diff"], ["report", "Report"]].map(([id, label]) => (
+            {[...(created ? [["plan", "Plan"]] : []), ["claude", `Claude activity (${claudeEvents.filter((e) => e.kind === "claude_tool").length})`], ["odoo", "Odoo log"], ["diff", "Diff"], ["report", "Report"]].map(([id, label]) => (
               <button key={id} onClick={() => setTab(id)}
                 className={`rounded-t-md px-3 py-1.5 text-sm ${tab === id ? "bg-zinc-900 text-white ring-1 ring-zinc-800" : "text-zinc-400 hover:text-zinc-200"}`}>{label}</button>
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden bg-zinc-900/40">
-            {mod && tab === "claude" && <ClaudeActivity events={claudeEvents} />}
+            {mod && tab === "plan" && <PlanPanel jobId={jobId} mod={mod} busy={job.running} onDone={reload} />}
+            {mod && tab === "claude" && <ClaudeActivity events={claudeEvents} created={created} />}
             {mod && tab === "odoo" && <OdooLog events={odooEvents} />}
             {mod && tab === "diff" && <DiffView jobId={jobId} module={mod.module} refreshKey={refreshKey} />}
             {mod && tab === "report" && <ReportView jobId={jobId} module={mod.module} refreshKey={refreshKey} />}

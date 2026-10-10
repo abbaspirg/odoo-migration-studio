@@ -118,6 +118,25 @@ Then in the UI:
 5. **Download zip** gets the migrated modules and their reports. **Jobs** lists history and can
    re-run failed modules.
 
+### New module
+
+**New module** creates a custom module from a description, for any Odoo version whose source and
+venv are set up:
+
+1. Give a technical name, the version and what the module should do. Optionally list the
+   dependencies you expect; Claude adds or drops modules to match the features.
+2. **Plan.** Claude reads that version's Odoo source (read-only) and drafts a plan: dependencies,
+   models and fields, views and menus, security, business logic, tests, and open questions with
+   the defaults it will use. In the **Plan** tab you can edit it, ask Claude to revise it, or
+   approve it. Nothing is written before you approve.
+3. **Build.** Claude writes the module, with tests, into `<workspace>/v<N>-new/<module>/`. Then
+   the usual pipeline runs: static checks (plus a check that every dependency exists for that
+   version), install test, unit tests and auto-fix. The report includes the approved plan.
+4. Use **Manual test** and **Send to Claude to fix** as for a migration. To change the design,
+   edit the plan and click **Rebuild**; the previous version is backed up first.
+
+Claude can't create images: add the banner and icon yourself.
+
 ### Ask Odoo
 
 **Ask Odoo** answers functional questions ("When does a sales order create its delivery?",

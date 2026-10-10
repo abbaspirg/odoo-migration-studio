@@ -36,15 +36,19 @@ def _tests_text(verdicts: dict) -> str:
 
 
 def write_module_report(*, job, module, status, error, steps, analysis, claude_reports, verdicts,
-                        changes, attempts, dbname, keep_db, log_dir: Path, session_id) -> Path:
+                        changes, attempts, dbname, keep_db, log_dir: Path, session_id,
+                        plan: str | None = None) -> Path:
     config.NOTES_DIR.mkdir(parents=True, exist_ok=True)
     path = config.NOTES_DIR / f"{module}.md"
+    created = job["options"].get("kind") == "create"
     lines = [
+        f"# `{module}` — new module for Odoo {job['target_version']}" if created else
         f"# `{module}` — Odoo {job['source_version']} → {job['target_version']}",
         "",
         f"- **Result:** {status.upper()}" + (f" — {error}" if error else ""),
         f"- **Date:** {time.strftime('%Y-%m-%d %H:%M')}",
         f"- **Job:** `{job['id']}` (Odoo Migration Studio)",
+        "- **Source:** created from an approved plan (below)" if created else
         f"- **Source:** `{_rel(Path(job['source_dir']) / module)}` (unchanged)",
         f"- **Output:** `{_rel(Path(job['output_dir']) / module)}`",
         f"- **Auto-fix attempts:** {attempts}",
@@ -64,6 +68,10 @@ def write_module_report(*, job, module, status, error, steps, analysis, claude_r
             continue
         note = (s.get("summary") or "").replace("|", "\\|").replace("\n", " ")[:200]
         lines.append(f"| {s['label']} | {s['status']} | {_fmt_duration(s.get('duration'))} | {note} |")
+
+    if plan:
+        lines += ["", "## Approved plan", "", "<details><summary>Show the plan</summary>", "",
+                  re.sub(r"^(#{1,5}) ", r"#\1 ", plan.strip(), flags=re.M), "", "</details>"]
 
     lines += ["", "## Changes made (Claude's report)", ""]
     if claude_reports:
@@ -86,13 +94,14 @@ def write_module_report(*, job, module, status, error, steps, analysis, claude_r
     else:
         lines.append("_No differences from the source module._")
 
-    lines += ["", "## Pre-scan findings (source module)", ""]
-    if analysis.get("rules"):
-        lines += ["| Rule | Severity | Hits | Fix |", "|---|---|---|---|"]
-        for r in analysis["rules"]:
-            lines.append(f"| {r['message']} | {r['severity']} | {r['count']} | {r['hint']} |")
-    else:
-        lines.append("_None._")
+    if not created:
+        lines += ["", "## Pre-scan findings (source module)", ""]
+        if analysis.get("rules"):
+            lines += ["| Rule | Severity | Hits | Fix |", "|---|---|---|---|"]
+            for r in analysis["rules"]:
+                lines.append(f"| {r['message']} | {r['severity']} | {r['count']} | {r['hint']} |")
+        else:
+            lines.append("_None._")
 
     failing = [(k, v) for k, v in verdicts.items() if not v.get("ok")]
     if failing:
@@ -102,6 +111,7 @@ def write_module_report(*, job, module, status, error, steps, analysis, claude_r
 
     lines += ["", "## Remaining manual checks", "",
               "- Review Claude's *Remaining TODOs / Needs review* list above.",
+              "- Check the module against the approved plan with Manual test." if created else
               "- Fill the Odoo 20 migration checklist (MIGRATION_RULES.md → Reusable Checklist).",
               "- Render website/portal/report pages: `t-esc`, `request.website` and Binary issues only show at render time."]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

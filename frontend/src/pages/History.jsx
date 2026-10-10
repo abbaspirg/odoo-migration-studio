@@ -28,13 +28,13 @@ export default function History() {
                   <tr key={j.id} className="border-b border-zinc-800/70 hover:bg-zinc-800/30">
                     <td className="py-2"><Link className="font-mono text-violet-300 hover:underline" to={`/jobs/${j.id}`}>{j.id}</Link>
                       {j.parent_job && <div className="text-[11px] text-zinc-500">re-run of {j.parent_job}</div>}</td>
-                    <td>{j.source_version} → {j.target_version}</td>
+                    <td>{j.options?.kind === "create" ? `new module · ${j.target_version}` : `${j.source_version} → ${j.target_version}`}</td>
                     <td><Badge status={j.status} /></td>
                     <td className="space-x-1">{Object.entries(j.counts).map(([s, n]) => <Badge key={s} status={s}>{n} {s}</Badge>)}</td>
                     <td className="text-xs text-zinc-400">{fmtTime(j.created_at)}</td>
                     <td className="text-xs text-zinc-400">{j.finished_at ? fmtDuration(j.finished_at - j.created_at) : "…"}</td>
                     <td className="text-right">
-                      {j.status !== "running" && j.status !== "queued" && failed > 0 && <Button className="text-xs" onClick={() => rerun(j.id)}>Re-run failed</Button>}
+                      {j.options?.kind !== "create" && j.status !== "running" && j.status !== "queued" && failed > 0 && <Button className="text-xs" onClick={() => rerun(j.id)}>Re-run failed</Button>}
                     </td>
                   </tr>
                 );

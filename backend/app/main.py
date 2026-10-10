@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 import shutil
 import time
 import uuid
@@ -255,6 +256,8 @@ async def cancel_module(job_id: str, module: str):
 @app.post("/api/jobs/{job_id}/rerun-failed")
 async def rerun_failed(job_id: str):
     job = _job_or_404(job_id)
+    if job["options"].get("kind") == "create":
+        _bad("A new module is rebuilt from its plan: use Approve and build in the Plan tab")
     failed = [m["module"] for m in job["modules"] if m["status"] != "passed"]
     if not failed:
         _bad("No failed modules in this job")
@@ -411,6 +414,81 @@ def add_rule(body: RuleIn):
     except ValueError as exc:
         _bad(str(exc))
     return {"ok": True, "path": str(path)}
+
+
+# ---------------------------------------------------------------- new modules
+class NewModule(BaseModel):
+    module: str
+    version: str
+    description: str
+    depends_hint: str = ""
+
+
+class PlanRevise(BaseModel):
+    feedback: str
+
+
+class PlanApprove(BaseModel):
+    text: str
+
+
+@app.get("/api/create/options")
+def create_options():
+    return [{"version": v, "output_dir": str(config.new_module_dir_for(v)),
+             "enterprise": bool(sources.enterprise_path(v))}
+            for v in config.VERSIONS if sources.community_path(v) and sources.venv_python(v)]
+
+
+@app.post("/api/create")
+async def create_module(body: NewModule):
+    name, version = body.module.strip(), body.version
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,62}", name):
+        _bad("Technical name: lowercase letters, digits and _ only, starting with a letter")
+    if not body.description.strip():
+        _bad("Describe what the module should do")
+    _claude_ready()
+    if not sources.community_path(version) or not sources.venv_python(version):
+        _bad(f"Odoo {version} needs its source and venv first (Versions & Sources)")
+    taken = pipeline.known_modules(version, config.output_dir_for(version)) - {
+        p.parent.name for p in config.new_module_dir_for(version).glob("*/__manifest__.py")}
+    if name in taken or (config.DEFAULT_CUSTOM_DIR / name).exists():
+        _bad(f"`{name}` is already an Odoo, enterprise, custom or migrated module: pick another name")
+    out = config.new_module_dir_for(version) / name
+    if out.exists() and not db.output_owned_by_studio(str(out.resolve())):
+        _bad(f"{out} already exists and wasn't created by the studio")
+    job_id = pipeline.create_module_job(name, version, body.description, body.depends_hint)
+    return db.get_job(job_id)
+
+
+def _plan_module(job_id: str, module: str) -> tuple[dict, dict]:
+    job, mod = _module_or_404(job_id, module)
+    if job["options"].get("kind") != "create":
+        _bad("Only new-module jobs have a plan")
+    if job_id in pipeline.RUNNING:
+        _bad("Wait until Claude has finished")
+    return job, mod
+
+
+@app.post("/api/jobs/{job_id}/modules/{module}/plan/revise")
+async def plan_revise(job_id: str, module: str, body: PlanRevise):
+    job, mod = _plan_module(job_id, module)
+    if not body.feedback.strip():
+        _bad("Write what should change in the plan")
+    _claude_ready()
+    pipeline.start_plan(job, module, body.feedback)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/modules/{module}/plan/approve")
+async def plan_approve(job_id: str, module: str, body: PlanApprove):
+    job, mod = _plan_module(job_id, module)
+    if not body.text.strip():
+        _bad("The plan is empty")
+    if not (mod.get("plan") or {}).get("text"):
+        _bad("There is no plan to approve yet")
+    _claude_ready()
+    pipeline.start_build(job, module, body.text)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- Ask Odoo

@@ -10,26 +10,30 @@ export const STATUS_STYLES = {
   cancelled: "bg-amber-500/15 text-amber-300 ring-amber-500/40",
   interrupted: "bg-amber-500/15 text-amber-300 ring-amber-500/40",
   done: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/40",
+  planning: "bg-sky-500/15 text-sky-300 ring-sky-500/40",
+  plan_ready: "bg-amber-500/15 text-amber-200 ring-amber-500/40",
+  waiting: "bg-amber-500/15 text-amber-200 ring-amber-500/40",
 };
 
 export function Badge({ status, children, className = "" }) {
   const s = STATUS_STYLES[status] || "bg-zinc-800 text-zinc-300 ring-zinc-700";
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${s} ${className}`}>
-      {status === "running" && <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />}
-      {children || status}
+      {(status === "running" || status === "planning") && <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />}
+      {children || (status === "plan_ready" ? "plan ready" : status)}
     </span>
   );
 }
 
 export function StatusDot({ status }) {
   const map = {
-    passed: "✓", failed: "✕", running: "", skipped: "–", cancelled: "!", pending: "", queued: "", interrupted: "!",
+    passed: "✓", failed: "✕", running: "", skipped: "–", cancelled: "!", pending: "", queued: "", interrupted: "!", waiting: "?",
   };
   const color = {
     passed: "bg-emerald-500 text-emerald-950", failed: "bg-rose-500 text-rose-950",
     running: "bg-sky-500 animate-pulse", skipped: "bg-zinc-700 text-zinc-300",
     cancelled: "bg-amber-500 text-amber-950", interrupted: "bg-amber-500 text-amber-950",
+    waiting: "bg-amber-400 text-amber-950",
     pending: "bg-zinc-800 ring-1 ring-zinc-600", queued: "bg-zinc-800 ring-1 ring-zinc-600",
   }[status] || "bg-zinc-700";
   return (
