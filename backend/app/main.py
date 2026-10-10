@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (ask, claude_runner, config, db, diffs, events, manual, modules, odoo_runner,
+from . import (ask, attachments, claude_runner, config, db, diffs, events, manual, modules, odoo_runner,
                pipeline, reports, sources)
 
 CLAUDE_STATUS: dict = {}
@@ -384,6 +384,7 @@ def manual_result(job_id: str, module: str, body: ManualResult):
 
 class ManualFix(BaseModel):
     notes: str
+    attachments: list[str] = []
 
 
 @app.post("/api/jobs/{job_id}/modules/{module}/manual-fix")
@@ -397,8 +398,9 @@ async def manual_fix(job_id: str, module: str, body: ManualFix):
         _bad("No migrated output for this module")
     if not CLAUDE_STATUS.get("logged_in"):
         _bad("Claude Code is not available or not logged in (see banner)")
+    files = _attachments(body.attachments)
     manual.record_result(job, module, "failed", body.notes)
-    pipeline.start_manual_fix(job, module, body.notes)
+    pipeline.start_manual_fix(job, module, body.notes, files)
     return {"ok": True}
 
 
@@ -416,16 +418,62 @@ def add_rule(body: RuleIn):
     return {"ok": True, "path": str(path)}
 
 
+# ---------------------------------------------------------------- attachments for Claude
+def _attachments(ids: list[str]) -> list[dict]:
+    try:
+        return attachments.resolve_all(ids)
+    except ValueError as exc:
+        _bad(str(exc))
+
+
+@app.post("/api/attachments")
+async def upload_attachments(files: list[UploadFile] = File(...)):
+    if len(files) > attachments.MAX_FILES:
+        _bad(f"Attach at most {attachments.MAX_FILES} files at a time")
+    out = []
+    for upload in files:
+        try:
+            att_id, dest = attachments.new_path(upload.filename or "file")
+        except ValueError as exc:
+            _bad(str(exc))
+        size = 0
+        with open(dest, "wb") as fh:
+            while chunk := await upload.read(1 << 20):
+                size += len(chunk)
+                if size > attachments.MAX_BYTES:
+                    fh.close()
+                    shutil.rmtree(dest.parent, ignore_errors=True)
+                    _bad(f"{upload.filename}: larger than {attachments.MAX_BYTES // (1024 * 1024)} MB")
+                fh.write(chunk)
+        out.append(attachments.describe(att_id))
+    return out
+
+
+@app.get("/api/attachments/{batch}/{name}")
+def get_attachment(batch: str, name: str):
+    try:
+        path = attachments.resolve(f"{batch}/{name}")
+    except ValueError as exc:
+        _bad(str(exc), 404)
+    k = attachments.kind(path.name)
+    # text (html and xml included) is served as plain text so it never runs in the studio's origin
+    media = None if k == "image" else "application/pdf" if k == "pdf" else "text/plain; charset=utf-8"
+    return FileResponse(path, filename=path.name, media_type=media, content_disposition_type="inline",
+                        headers={"X-Content-Type-Options": "nosniff"})
+
+
 # ---------------------------------------------------------------- new modules
 class NewModule(BaseModel):
     module: str
     version: str
     description: str
     depends_hint: str = ""
+    attachments: list[str] = []
 
 
 class PlanRevise(BaseModel):
     feedback: str
+    attachments: list[str] = []
 
 
 class PlanApprove(BaseModel):
@@ -456,7 +504,8 @@ async def create_module(body: NewModule):
     out = config.new_module_dir_for(version) / name
     if out.exists() and not db.output_owned_by_studio(str(out.resolve())):
         _bad(f"{out} already exists and wasn't created by the studio")
-    job_id = pipeline.create_module_job(name, version, body.description, body.depends_hint)
+    job_id = pipeline.create_module_job(name, version, body.description, body.depends_hint,
+                                        _attachments(body.attachments))
     return db.get_job(job_id)
 
 
@@ -475,7 +524,7 @@ async def plan_revise(job_id: str, module: str, body: PlanRevise):
     if not body.feedback.strip():
         _bad("Write what should change in the plan")
     _claude_ready()
-    pipeline.start_plan(job, module, body.feedback)
+    pipeline.start_plan(job, module, body.feedback, _attachments(body.attachments))
     return {"ok": True}
 
 
@@ -497,10 +546,12 @@ class AskNew(BaseModel):
     question: str
     enterprise: bool = False
     custom: bool = False
+    attachments: list[str] = []
 
 
 class AskFollowUp(BaseModel):
     question: str
+    attachments: list[str] = []
 
 
 def _thread_or_404(thread_id: str) -> dict:
@@ -532,7 +583,7 @@ async def ask_new(body: AskNew):
         _bad("Write a question first")
     try:
         return ask.create_thread(body.version, {"enterprise": body.enterprise, "custom": body.custom},
-                                 body.question)
+                                 body.question, _attachments(body.attachments))
     except ValueError as exc:
         _bad(str(exc))
 
@@ -547,7 +598,7 @@ async def ask_follow_up(thread_id: str, body: AskFollowUp):
     _thread_or_404(thread_id)
     _claude_ready()
     try:
-        ask.ask(thread_id, body.question)
+        ask.ask(thread_id, body.question, _attachments(body.attachments))
     except ValueError as exc:
         _bad(str(exc))
     return ask.get_thread(thread_id)

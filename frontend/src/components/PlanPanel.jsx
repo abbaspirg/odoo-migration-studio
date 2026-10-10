@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, fmtTime } from "../api.js";
 import { Badge, Button, ErrorBox } from "./ui.jsx";
+import { AttachBar, AttachmentList, useAttach } from "./Attachments.jsx";
 
 /* A new module's plan: Claude drafts it, the user edits, revises or approves it. */
 export default function PlanPanel({ jobId, mod, busy: jobBusy, onDone }) {
@@ -12,11 +13,12 @@ export default function PlanPanel({ jobId, mod, busy: jobBusy, onDone }) {
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const att = useAttach();
   useEffect(() => { setText(plan.text || ""); setEditing(false); }, [plan.text, plan.round]);
 
   const post = (path, body) => async () => {
     setBusy(true); setErr(null);
-    try { await api(`/api/jobs/${jobId}/modules/${mod.module}/plan/${path}`, { method: "POST", body }); setFeedback(""); onDone?.(); }
+    try { await api(`/api/jobs/${jobId}/modules/${mod.module}/plan/${path}`, { method: "POST", body }); setFeedback(""); att.clear(); onDone?.(); }
     catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
@@ -68,10 +70,11 @@ export default function PlanPanel({ jobId, mod, busy: jobBusy, onDone }) {
             </div>
             <div className="rounded-lg border border-zinc-800 p-3">
               <div className="text-sm font-medium text-zinc-100">Ask Claude to revise</div>
-              <textarea id="plan-feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3}
+              <textarea id="plan-feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3} {...att.textareaProps}
                 placeholder="e.g. Use the existing Delivery Method instead of a new model; answer to question 2: yes"
                 className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
-              <Button className="mt-1 w-full" disabled={locked || !feedback.trim()} onClick={post("revise", { feedback })}>Revise the plan</Button>
+              <AttachBar att={att} disabled={locked} />
+              <Button className="mt-1 w-full" disabled={locked || att.uploading || !feedback.trim()} onClick={post("revise", { feedback, attachments: att.ids })}>Revise the plan</Button>
             </div>
           </div>
         )}
@@ -80,7 +83,7 @@ export default function PlanPanel({ jobId, mod, busy: jobBusy, onDone }) {
         {plan.history?.length > 0 && (
           <div className="space-y-1 text-xs text-zinc-500">
             <div className="uppercase tracking-wide">Your revision requests</div>
-            {plan.history.map((h) => <div key={h.round}>Round {h.round}: {h.feedback}</div>)}
+            {plan.history.map((h) => <div key={h.round}>Round {h.round}: {h.feedback}<AttachmentList files={h.attachments} /></div>)}
           </div>
         )}
       </div>

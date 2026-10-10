@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import claude_runner, config, db, events, modules, sources
+from . import attachments, claude_runner, config, db, events, modules, sources
 from .procs import CancelToken, Cancelled
 
 SCHEMA = """
@@ -170,7 +170,7 @@ def delete_thread(thread_id: str) -> None:
 
 
 # ---------------------------------------------------------------- asking
-def create_thread(version: str, scopes: dict, question: str) -> dict:
+def create_thread(version: str, scopes: dict, question: str, files: list[dict] | None = None) -> dict:
     if not sources.community_path(version):
         raise ValueError(f"Odoo {version} sources are not cloned (see Versions & Sources)")
     if scopes.get("enterprise") and not sources.enterprise_path(version):
@@ -183,11 +183,11 @@ def create_thread(version: str, scopes: dict, question: str) -> dict:
              (thread_id, now, now, title, version, json.dumps(
                  {"enterprise": bool(scopes.get("enterprise")), "custom": bool(scopes.get("custom"))}),
               "idle"))
-    ask(thread_id, question)
+    ask(thread_id, question, files)
     return get_thread(thread_id)
 
 
-def ask(thread_id: str, question: str) -> None:
+def ask(thread_id: str, question: str, files: list[dict] | None = None) -> None:
     thread = get_thread(thread_id)
     if not thread:
         raise ValueError("Unknown question thread")
@@ -197,26 +197,27 @@ def ask(thread_id: str, question: str) -> None:
     if not question:
         raise ValueError("Write a question first")
     n = sum(1 for m in thread["messages"] if m["role"] == "user") + 1
-    _add_message(thread_id, "user", question)
+    files = files or []
+    _add_message(thread_id, "user", question, {"attachments": files} if files else None)
     token = CancelToken()
     RUNNING[thread_id] = token
     _update(thread_id, status="running", error=None)
     events.publish("ask_status", {"status": "running"}, job_id=EVENT_JOB, module=thread_id, persist=False)
-    asyncio.create_task(_run(thread, question, n, token))
+    asyncio.create_task(_run(thread, question, n, token, files))
 
 
-async def _run(thread: dict, question: str, n: int, token: CancelToken) -> None:
+async def _run(thread: dict, question: str, n: int, token: CancelToken, files: list[dict]) -> None:
     thread_id = thread["id"]
     settings = db.get_settings()
     log_dir = events.module_log_dir(EVENT_JOB, thread_id)
     cwd = config.DATA_DIR / "ask" / thread_id            # empty, so no project CLAUDE.md is picked up
     cwd.mkdir(parents=True, exist_ok=True)
     read_only = {"system_prompt": system_prompt(thread["version"], thread["scopes"]),
-                 "dirs": allowed_roots(thread), "max_turns": int(settings.get("ask_max_turns") or 30)}
+                 "dirs": allowed_roots(thread) + attachments.dirs(files), "max_turns": int(settings.get("ask_max_turns") or 30)}
     status, error = "failed", None
     try:
         run = claude_runner.ClaudeRun(EVENT_JOB, thread_id, f"q{n}", log_dir)
-        res = await run.run(question, cwd, settings, token, resume=thread.get("session_id"),
+        res = await run.run(question + attachments.prompt_block(files), cwd, settings, token, resume=thread.get("session_id"),
                             read_only=read_only)
         if res["session_id"]:
             _update(thread_id, session_id=res["session_id"])

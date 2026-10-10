@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, fmtTime, useEvents } from "../api.js";
 import { Badge, Button, ErrorBox } from "./ui.jsx";
+import { AttachBar, AttachmentList, useAttach } from "./Attachments.jsx";
 
 const STATUS = { starting: "running", ready: "passed", stopping: "cancelled", stopped: "skipped", crashed: "failed" };
 
@@ -37,7 +38,11 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
   const record = (result) => run(async () => setSaved(await api(`/api/jobs/${jobId}/modules/${module}/manual-result`, { method: "POST", body: { result, notes } })))();
 
   useEffect(() => { setRule(fix?.rule_suggestion || ""); setRuleSaved(null); }, [fix?.round, fix?.rule_suggestion]);
-  const sendFix = run(() => api(`/api/jobs/${jobId}/modules/${module}/manual-fix`, { method: "POST", body: { notes } }));
+  const att = useAttach();
+  const sendFix = run(async () => {
+    await api(`/api/jobs/${jobId}/modules/${module}/manual-fix`, { method: "POST", body: { notes, attachments: att.ids } });
+    att.clear();
+  });
   const saveRule = run(async () => setRuleSaved((await api("/api/rules/lessons", { method: "POST", body: { text: rule, module } })).path));
   const fixing = fix?.status === "running";
 
@@ -94,9 +99,10 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
 
       <div className="mt-3 border-t border-zinc-800 pt-3">
         <div className="mb-1 text-xs text-zinc-400">Your verdict (added to the module report)</div>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+        <textarea id="manual-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} {...att.textareaProps}
           placeholder="What you checked, what broke…"
           className="w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
+        <AttachBar att={att} />
         <div className="mt-1 flex gap-2">
           <Button className="flex-1 text-xs" disabled={busy} onClick={() => record("passed")}>✓ Mark passed</Button>
           <Button className="flex-1 text-xs" disabled={busy} onClick={() => record("failed")}>✕ Mark failed</Button>
@@ -110,10 +116,13 @@ export default function ManualTest({ jobId, mod, onShowLog }) {
           {fix && <Badge status={fix.status === "running" ? "running" : fix.status}>round {fix.round}: {fix.status}</Badge>}
         </div>
         {fixing ? (
-          <p className="text-sky-300">Claude is fixing what you reported (round {fix.round}). Follow it in the Claude tab; the checks, install and tests re-run after. If they pass, Odoo restarts here on a fresh database.</p>
+          <>
+            <p className="text-sky-300">Claude is fixing what you reported (round {fix.round}). Follow it in the Claude tab; the checks, install and tests re-run after. If they pass, Odoo restarts here on a fresh database.</p>
+            <AttachmentList files={fix.attachments} />
+          </>
         ) : (
           <>
-            <p className="mb-2 text-zinc-400">Describe what's wrong in the box above: the page, what you did, what you expected. Paste browser console errors too. Claude also gets the errors from this Odoo's log.</p>
+            <p className="mb-2 text-zinc-400">Describe what's wrong in the box above: the page, what you did, what you expected. Paste browser console errors too, and attach screenshots. Claude also gets the errors from this Odoo's log.</p>
             <Button variant="primary" className="w-full" disabled={busy || pipelineBusy || !notes.trim()} onClick={sendFix}>
               Send to Claude to fix
             </Button>

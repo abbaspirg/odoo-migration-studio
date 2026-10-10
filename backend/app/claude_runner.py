@@ -61,7 +61,7 @@ async def cli_status() -> dict:
 
 
 def build_command(prompt: str, settings: dict, resume: str | None = None,
-                  read_only: dict | None = None) -> list[str]:
+                  read_only: dict | None = None, extra_dirs: list | None = None) -> list[str]:
     """read_only: {"system_prompt", "dirs", "max_turns"} runs Claude with only Read/Grep/Glob,
     confined to the working directory and `dirs`, instead of the migration setup."""
     if read_only:
@@ -87,6 +87,8 @@ def build_command(prompt: str, settings: dict, resume: str | None = None,
         cmd += ["--append-system-prompt", rules]
     if settings.get("claude_model"):
         cmd += ["--model", settings["claude_model"]]
+    for d in extra_dirs or []:                  # e.g. the user's attachments
+        cmd += ["--add-dir", str(d)]
     if resume:
         cmd += ["--resume", resume]
     return cmd
@@ -180,8 +182,8 @@ class ClaudeRun:
 
     async def run(self, prompt: str, module_dir: Path, settings: dict, token: CancelToken,
                   env_path_prefix: str | None = None, resume: str | None = None,
-                  read_only: dict | None = None) -> dict:
-        cmd = build_command(prompt, settings, resume, read_only)
+                  read_only: dict | None = None, extra_dirs: list | None = None) -> dict:
+        cmd = build_command(prompt, settings, resume, read_only, extra_dirs)
         env = claude_env()
         if env_path_prefix:                     # `python` → the target Odoo venv
             env["PATH"] = env_path_prefix + os.pathsep + env.get("PATH", "")

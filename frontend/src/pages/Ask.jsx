@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api, fmtTime, useEvents, useFetch } from "../api.js";
 import { Badge, Button, ErrorBox, Select } from "../components/ui.jsx";
 import ClaudeActivity from "../components/ClaudeActivity.jsx";
+import { AttachBar, AttachmentList, useAttach } from "../components/Attachments.jsx";
 
 const EXAMPLES = [
   "When is the invoiced quantity of a sale order line updated for a service product?",
@@ -86,6 +87,7 @@ function NewQuestion({ options, onCreated }) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const att = useAttach();
   useEffect(() => { if (options?.length && !version) setVersion(options[options.length - 1].version); }, [options]);
   const opt = options?.find((o) => o.version === version);
   const submit = async (e) => {
@@ -93,7 +95,7 @@ function NewQuestion({ options, onCreated }) {
     setBusy(true); setErr(null);
     try {
       const t = await api("/api/ask/threads", { method: "POST", body: {
-        version, question, enterprise: enterprise && !!opt?.enterprise, custom: custom && !!opt?.custom.length } });
+        version, question, enterprise: enterprise && !!opt?.enterprise, custom: custom && !!opt?.custom.length, attachments: att.ids } });
       onCreated(t);
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
@@ -128,12 +130,15 @@ function NewQuestion({ options, onCreated }) {
           your custom modules{opt?.custom.length ? ` (${opt.custom.length})` : ""}
         </label>
       </div>
-      <textarea id="ask-question" value={question} onChange={(e) => setQuestion(e.target.value)} rows={5}
+      <div>
+      <textarea id="ask-question" value={question} onChange={(e) => setQuestion(e.target.value)} rows={5} {...att.textareaProps}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(e); }}
         placeholder="e.g. Which setting makes Odoo ask for a backorder when validating a partial delivery?"
         className="w-full rounded-md border border-zinc-700 bg-zinc-950 p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
+      <AttachBar att={att} />
+      </div>
       <div className="flex items-center gap-3">
-        <Button variant="primary" type="submit" disabled={busy || !question.trim() || !version}>Ask Claude</Button>
+        <Button variant="primary" type="submit" disabled={busy || att.uploading || !question.trim() || !version}>Ask Claude</Button>
         <span className="text-xs text-zinc-500">Ctrl+Enter · runs on your Claude account, read-only</span>
       </div>
       {err && <ErrorBox>{err}</ErrorBox>}
@@ -158,6 +163,7 @@ function Thread({ threadId, workspace, onChanged }) {
   const [err, setErr] = useState(null);
   const navigate = useNavigate();
   const bottom = useRef();
+  const att = useAttach();
 
   const load = () => api(`/api/ask/threads/${threadId}`).then(setThread).catch((e) => setErr(e.message));
   useEffect(() => {
@@ -179,7 +185,7 @@ function Thread({ threadId, workspace, onChanged }) {
   const send = async (e) => {
     e.preventDefault();
     setBusy(true); setErr(null);
-    try { setThread(await api(`/api/ask/threads/${threadId}/messages`, { method: "POST", body: { question: follow } })); setFollow(""); onChanged(); }
+    try { setThread(await api(`/api/ask/threads/${threadId}/messages`, { method: "POST", body: { question: follow, attachments: att.ids } })); setFollow(""); att.clear(); onChanged(); }
     catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
   const stop = () => api(`/api/ask/threads/${threadId}/cancel`, { method: "POST" }).catch((e) => setErr(e.message));
@@ -211,7 +217,7 @@ function Thread({ threadId, workspace, onChanged }) {
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-3xl space-y-4 px-5 py-5">
             {thread.messages.map((m) => m.role === "user" ? (
-              <div key={m.id} className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-lg bg-violet-600/20 px-3 py-2 text-sm text-zinc-100 ring-1 ring-violet-500/30">{m.text}</div>
+              <div key={m.id} className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-lg bg-violet-600/20 px-3 py-2 text-sm text-zinc-100 ring-1 ring-violet-500/30">{m.text}<AttachmentList files={m.meta?.attachments} /></div>
             ) : (
               <div key={m.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3">
                 <Answer text={m.text} workspace={workspace} onCite={(path, line) => setCite({ path, line })} />
@@ -236,11 +242,14 @@ function Thread({ threadId, workspace, onChanged }) {
         </div>
         <form onSubmit={send} className="border-t border-zinc-800 px-5 py-3">
           <div className="mx-auto flex max-w-3xl gap-2">
-            <textarea id="ask-follow-up" value={follow} onChange={(e) => setFollow(e.target.value)} rows={2}
+            <div className="min-w-0 flex-1">
+            <textarea id="ask-follow-up" value={follow} onChange={(e) => setFollow(e.target.value)} rows={2} {...att.textareaProps}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(e); }}
               placeholder={running ? "Wait for the answer…" : "Ask a follow-up (Claude keeps the context)…"}
-              className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
-            <Button variant="primary" type="submit" disabled={busy || running || !follow.trim()}>Ask</Button>
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
+            <AttachBar att={att} disabled={running} />
+            </div>
+            <Button variant="primary" type="submit" className="self-start" disabled={busy || running || att.uploading || !follow.trim()}>Ask</Button>
           </div>
           {err && <div className="mx-auto mt-1 max-w-3xl text-xs text-rose-300">{err}</div>}
         </form>

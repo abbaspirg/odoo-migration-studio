@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, useFetch } from "../api.js";
 import { Button, Card, ErrorBox, Input, Select } from "../components/ui.jsx";
+import { AttachBar, useAttach } from "../components/Attachments.jsx";
 
 const STEPS = [
   ["Plan", "Claude reads the Odoo source for that version and drafts a plan: dependencies, models, views, security and tests."],
@@ -18,6 +19,7 @@ export default function CreateModule() {
   const [depends, setDepends] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const att = useAttach();
   useEffect(() => { if (options?.length && !version) setVersion(options[options.length - 1].version); }, [options]);
   const opt = options?.find((o) => o.version === version);
   const nameOk = /^[a-z][a-z0-9_]{1,62}$/.test(module);
@@ -26,7 +28,7 @@ export default function CreateModule() {
     e.preventDefault();
     setBusy(true); setErr(null);
     try {
-      const job = await api("/api/create", { method: "POST", body: { module, version, description, depends_hint: depends } });
+      const job = await api("/api/create", { method: "POST", body: { module, version, description, depends_hint: depends, attachments: att.ids } });
       nav(`/jobs/${job.id}`);
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
@@ -64,10 +66,11 @@ export default function CreateModule() {
         </div>
         <label className="mt-4 block space-y-1 text-sm text-zinc-300">
           <div>What should it do?</div>
-          <textarea id="new-module-description" rows={8} value={description} onChange={(e) => setDescription(e.target.value)}
+          <textarea id="new-module-description" rows={8} value={description} onChange={(e) => setDescription(e.target.value)} {...att.textareaProps}
             placeholder={"Who uses it, the screens and fields they need, the rules it enforces.\n\ne.g. Let salespeople book a delivery time slot on a quotation. Slots are defined per warehouse with a capacity. A slot is reserved when the order is confirmed and appears on the delivery order. Show a calendar of booked slots to inventory users."}
             className="w-full rounded-md border border-zinc-700 bg-zinc-950 p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none" />
         </label>
+        <AttachBar att={att} />
         <label className="mt-4 block space-y-1 text-sm text-zinc-300">
           <div>Dependencies you expect <span className="text-zinc-500">(optional)</span></div>
           <Input id="new-module-depends" className="w-full font-mono" value={depends} onChange={(e) => setDepends(e.target.value)} placeholder="e.g. sale_stock, website_sale" />
@@ -77,7 +80,7 @@ export default function CreateModule() {
       </Card>
       {err && <ErrorBox>{err}</ErrorBox>}
       <div className="flex items-center gap-3">
-        <Button variant="primary" type="submit" disabled={busy || !nameOk || !description.trim() || !version}>Draft the plan</Button>
+        <Button variant="primary" type="submit" disabled={busy || att.uploading || !nameOk || !description.trim() || !version}>Draft the plan</Button>
         <span className="text-xs text-zinc-500">Planning is read-only and runs on your Claude account.</span>
       </div>
     </form>

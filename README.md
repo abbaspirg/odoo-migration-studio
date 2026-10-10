@@ -118,6 +118,18 @@ Then in the UI:
 5. **Download zip** gets the migrated modules and their reports. **Jobs** lists history and can
    re-run failed modules.
 
+### Attaching files
+
+Every box whose text goes to Claude takes attachments: the module description on **New module**,
+**Ask Claude to revise** in the Plan tab, the verdict box used by **Send to Claude to fix**, and
+Ask Odoo questions and follow-ups. Click **Attach files**, paste a screenshot (Ctrl+V) or drop files
+on the box. Images (PNG, JPG, GIF, WebP), PDFs and text files (logs, code, CSV, XML…) are
+accepted, up to 10 files of 10 MB each.
+
+Claude opens each file with its Read tool, so it sees screenshots and mockups. Files are stored in
+`data/attachments/`, never inside a module, so they don't end up in the module or the download
+zip. The module report lists what was attached to each round.
+
 ### New module
 
 **New module** creates a custom module from a description, for any Odoo version whose source and

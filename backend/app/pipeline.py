@@ -10,7 +10,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import (analyzer, ask, claude_runner, config, db, diffs, events, manual, modules,
+from . import (analyzer, ask, attachments, claude_runner, config, db, diffs, events, manual, modules,
                odoo_runner, reports, sources, static_checks)
 from .procs import CancelToken, Cancelled
 
@@ -165,7 +165,8 @@ Reply with the same report format (## Changes made / ## Remaining TODOs / Needs 
 the whole migration so far."""
 
 
-def manual_fix_prompt(tgt_ver, notes: str, server_log: str, todos: list[str]) -> str:
+def manual_fix_prompt(tgt_ver, notes: str, server_log: str, todos: list[str],
+                      files: list[dict] | None = None) -> str:
     log = server_log.strip() or "(no ERROR lines in the server log: the problem only shows in the browser)"
     todo_block = "\n".join(f"[T{i}] {t}" for i, t in enumerate(todos, 1)) or "(none)"
     return f"""A person installed your migrated module on a real Odoo {tgt_ver} server and clicked through it.
@@ -173,7 +174,7 @@ The automatic checks had passed, but they found problems.
 
 ## What the tester reported
 {notes.strip()}
-
+{attachments.prompt_block(files or [])}
 ## Errors from that Odoo server's log
 ```
 {log}
@@ -245,14 +246,15 @@ Dependencies: choose them from what the features actually use. Each one must be 
 folders above. Use enterprise modules only when a feature needs them, and say so."""
 
 
-def plan_prompt(module: str, version: str, description: str, depends_hint: str) -> str:
+def plan_prompt(module: str, version: str, description: str, depends_hint: str,
+                files: list[dict] | None = None) -> str:
     hint = (f"\nDependencies the user expects (a starting point; add or drop modules as the features "
             f"require): {depends_hint}\n") if depends_hint.strip() else ""
     return f"""Plan a new Odoo {version} module with the technical name `{module}`.
 
 What it should do:
 {description.strip()}
-{hint}
+{hint}{attachments.prompt_block(files or [])}
 Reply with the plan in exactly this format. Keep it concise: a functional person reviews it before
 any code is written. Cite the Odoo code you build on as inline `path:line`.
 
@@ -276,11 +278,11 @@ any code is written. Cite the Odoo code you build on as inline `path:line`.
 - <decisions the description leaves open, each with the default you will use; or "None">"""
 
 
-def revise_prompt(feedback: str) -> str:
+def revise_prompt(feedback: str, files: list[dict] | None = None) -> str:
     return f"""The user reviewed your plan and wants changes:
 
 {feedback.strip()}
-
+{attachments.prompt_block(files or [])}
 Check the Odoo source where needed, then reply with the complete revised plan in the same format."""
 
 
@@ -310,14 +312,14 @@ def create_claude_md(module: str, version: str, out: Path) -> str:
 """
 
 
-def build_prompt(module: str, version: str, plan: str) -> str:
+def build_prompt(module: str, version: str, plan: str, files: list[dict] | None = None) -> str:
     return f"""Create the new Odoo {version} module `{module}` in the current directory, following the approved
 plan below. The directory only holds CLAUDE.md: read it first for the Odoo source paths and the
 house-style reference.
 
 # Approved plan
 {plan.strip()}
-
+{attachments.prompt_block(files or [])}
 # Requirements
 - Verify every model, field, method, decorator, XML ID, inherit_id, xpath and JS import against
   the Odoo {version} source with Grep/Read before using it. Do not guess names.
@@ -379,6 +381,9 @@ class ModulePipeline:
             saved = (db.get_module(self.job_id, module) or {}).get("steps") or []
             if [s["id"] for s in saved] == [s["id"] for s in self.steps]:
                 self.steps = saved
+        # the description's attachments stay readable for the build and every later round
+        self.files: list[dict] = list(self.options.get("attachments") or [])
+        self.extra_dirs: list[Path] = attachments.dirs(self.files)
         self.session_id: str | None = None
         self.claude_reports: list[str] = []
         self.attempts = 0
@@ -480,7 +485,8 @@ class ModulePipeline:
         run = claude_runner.ClaudeRun(self.job_id, self.module, attempt, self.log_dir)
         py = sources.venv_python(self.tgt_ver)
         res = await run.run(prompt, self.out, self.settings, self.token,
-                            env_path_prefix=str(py.parent) if py else None, resume=self.session_id)
+                            env_path_prefix=str(py.parent) if py else None, resume=self.session_id,
+                            extra_dirs=self.extra_dirs)
         if res["session_id"]:
             self.session_id = res["session_id"]
             db.update_module(self.job_id, self.module, session_id=self.session_id)
@@ -493,7 +499,7 @@ class ModulePipeline:
         self.set_step("claude", "running")
         if self.kind == "create":
             plan = (db.get_module(self.job_id, self.module) or {}).get("plan") or {}
-            prompt = build_prompt(self.module, self.tgt_ver, plan.get("text", ""))
+            prompt = build_prompt(self.module, self.tgt_ver, plan.get("text", ""), self.files)
         else:
             prompt = task_prompt(self.module, self.src_ver, self.tgt_ver,
                                  analyzer.prompt_summary(self.analysis))
@@ -702,7 +708,7 @@ class ModulePipeline:
 
 
     # -- new module: Claude drafts (or revises) the plan, read-only; the user then approves it
-    async def run_plan(self, feedback: str = "") -> str:
+    async def run_plan(self, feedback: str = "", files: list[dict] | None = None) -> str:
         mod = db.get_module(self.job_id, self.module) or {}
         plan = mod.get("plan") or {}
         rnd = int(plan.get("round", 0)) + 1
@@ -712,13 +718,15 @@ class ModulePipeline:
         out_dir = Path(self.job["output_dir"])
         cwd = config.DATA_DIR / "plans" / self.job_id          # empty: no project CLAUDE.md
         cwd.mkdir(parents=True, exist_ok=True)
+        files = files or []
         read_only = {"system_prompt": plan_system_prompt(self.tgt_ver, out_dir),
-                     "dirs": [p for _, p in plan_dirs(self.tgt_ver, out_dir)],
+                     "dirs": [p for _, p in plan_dirs(self.tgt_ver, out_dir)]
+                     + attachments.dirs(self.files + files),
                      "max_turns": int(self.settings.get("ask_max_turns") or 30)}
-        prompt = revise_prompt(feedback) if revising else plan_prompt(
+        prompt = revise_prompt(feedback, files) if revising else plan_prompt(
             self.module, self.tgt_ver, self.options.get("description", ""),
             self.options.get("depends_hint", "") + (f"\n\nAlso take this into account: {feedback}"
-                                                     if feedback.strip() else ""))
+                                                     if feedback.strip() else ""), self.files + files)
         (self.log_dir / f"prompt_p{rnd}.txt").write_text(prompt)
         status, error = "plan_ready", None
         try:
@@ -729,7 +737,8 @@ class ModulePipeline:
             if not text:
                 raise StepFailed("plan", f"Claude returned no plan (exit {res['returncode']}, "
                                          f"{res['subtype'] or 'no result'})")
-            history = plan.get("history", []) + ([{"round": rnd, "feedback": feedback.strip()}]
+            history = plan.get("history", []) + ([{"round": rnd, "feedback": feedback.strip(),
+                                                   "attachments": files}]
                                                  if feedback.strip() else [])
             plan.update(text=text, session_id=res["session_id"] or plan.get("session_id"),
                         round=rnd, status="ready", history=history)
@@ -751,7 +760,9 @@ class ModulePipeline:
         return status
 
     # -- a fix round driven by what the human tester found
-    async def run_manual_fix(self, notes: str, server_log: str) -> dict:
+    async def run_manual_fix(self, notes: str, server_log: str, files: list[dict] | None = None) -> dict:
+        files = files or []
+        self.extra_dirs = attachments.dirs(self.files + files)
         mod = db.get_module(self.job_id, self.module) or {}
         if mod.get("steps"):
             self.steps = mod["steps"]
@@ -759,6 +770,7 @@ class ModulePipeline:
         rnd = manual_round(self.log_dir)
         label, intro = f"m{rnd}", f"manual fix round {rnd}"
         info = {"round": rnd, "status": "running", "notes": notes.strip(), "report": "",
+                "attachments": files,
                 "rule_suggestion": "", "started_at": time.time(), "finished_at": None}
         db.update_module(self.job_id, self.module, manual_fix=info, error=None)
         events.publish("manual_fix", info, job_id=self.job_id, module=self.module)
@@ -771,7 +783,7 @@ class ModulePipeline:
             self.source_fp = await asyncio.to_thread(static_checks.fingerprint, self.source_module)
             self.set_step("fix", "running", f"{intro}: Claude fixing what you reported")
             todos = await asyncio.to_thread(reports.open_todos, self.module)
-            prompt = manual_fix_prompt(self.tgt_ver, notes, server_log, todos)
+            prompt = manual_fix_prompt(self.tgt_ver, notes, server_log, todos, files)
             (self.log_dir / f"prompt_{label}.txt").write_text(prompt)
             res = await self.run_claude(prompt, label)
             info["report"] = res["result_text"] or ""
@@ -806,7 +818,7 @@ class ModulePipeline:
         try:
             await asyncio.to_thread(reports.append_manual_fix, job=self.job, module=self.module,
                                     rnd=rnd, status=status, notes=notes, claude_report=info["report"],
-                                    steps=self.steps, error=error, resolved=resolved)
+                                    steps=self.steps, error=error, resolved=resolved, files=files)
         except Exception as exc:          # noqa: BLE001 - the round's result matters more than the note
             (self.log_dir / f"report_{label}_error.txt").write_text(f"{exc}\n")
         await self.do_cleanup()
@@ -894,7 +906,7 @@ def cancel_job(job_id: str, module: str | None = None) -> bool:
     return True
 
 
-def start_manual_fix(job: dict, module: str, notes: str) -> None:
+def start_manual_fix(job: dict, module: str, notes: str, files: list[dict] | None = None) -> None:
     """Send the tester's notes and the manual server's errors to Claude, re-check, restart Odoo."""
     job_id = job["id"]
     server_log = manual.server_errors(job_id, module)
@@ -909,7 +921,7 @@ def start_manual_fix(job: dict, module: str, notes: str) -> None:
         try:
             await limiter().acquire(token)
             try:
-                info = await ModulePipeline(job, module, token).run_manual_fix(notes, server_log)
+                info = await ModulePipeline(job, module, token).run_manual_fix(notes, server_log, files)
             finally:
                 await limiter().release()
         except Cancelled:
@@ -974,10 +986,10 @@ def _start_single(job: dict, module: str, work) -> None:
     RUNNING[job_id]["task"] = asyncio.create_task(go())
 
 
-def start_plan(job: dict, module: str, feedback: str = "") -> None:
+def start_plan(job: dict, module: str, feedback: str = "", files: list[dict] | None = None) -> None:
     db.update_job(job["id"], status="planning", finished_at=None)
     events.publish("job", {"status": "planning"}, job_id=job["id"])
-    _start_single(job, module, lambda p: p.run_plan(feedback))
+    _start_single(job, module, lambda p: p.run_plan(feedback, files))
 
 
 def start_build(job: dict, module: str, plan_text: str) -> None:
@@ -997,14 +1009,15 @@ def start_build(job: dict, module: str, plan_text: str) -> None:
     _start_single(job, module, lambda p: p.run())
 
 
-def create_module_job(module: str, version: str, description: str, depends_hint: str) -> str:
+def create_module_job(module: str, version: str, description: str, depends_hint: str,
+                      files: list[dict] | None = None) -> str:
     """A job that plans, then (after approval) builds a new module in <workspace>/v<N>-new/."""
     NEW_MODULE_BASE.mkdir(parents=True, exist_ok=True)
     out_dir = config.new_module_dir_for(version)
     out_dir.mkdir(parents=True, exist_ok=True)
     job_id = db.create_job(version, version, NEW_MODULE_BASE, out_dir, [(module, [])],
                            {"kind": "create", "description": description.strip(),
-                            "depends_hint": depends_hint.strip()})
+                            "depends_hint": depends_hint.strip(), "attachments": files or []})
     steps = [{"id": s, "label": label, "status": "pending", "started_at": None, "finished_at": None,
               "duration": None, "summary": "", "details": {}} for s, label in STEPS_CREATE]
     db.update_module(job_id, module, steps=steps, plan={"round": 0, "status": "planning"})

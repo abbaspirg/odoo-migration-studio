@@ -6,7 +6,7 @@ import re
 import time
 from pathlib import Path
 
-from . import config
+from . import attachments, config
 
 SUMMARY_HEADER = "\n\n## Migration Studio runs\n\n" \
                  "_Appended automatically by Odoo Migration Studio (one line per module run)._\n\n"
@@ -69,6 +69,9 @@ def write_module_report(*, job, module, status, error, steps, analysis, claude_r
         note = (s.get("summary") or "").replace("|", "\\|").replace("\n", " ")[:200]
         lines.append(f"| {s['label']} | {s['status']} | {_fmt_duration(s.get('duration'))} | {note} |")
 
+    if created and job["options"].get("attachments"):
+        lines += ["", "## Files attached to the description", "",
+                  *attachments.report_lines(job["options"]["attachments"])]
     if plan:
         lines += ["", "## Approved plan", "", "<details><summary>Show the plan</summary>", "",
                   re.sub(r"^(#{1,5}) ", r"#\1 ", plan.strip(), flags=re.M), "", "</details>"]
@@ -192,7 +195,7 @@ def strike_todos(text: str, resolved: list[str], rnd: int) -> str:
 
 
 def append_manual_fix(*, job, module, rnd, status, notes, claude_report, steps, error,
-                      resolved: list[str] | None = None) -> Path:
+                      resolved: list[str] | None = None, files: list[dict] | None = None) -> Path:
     """Add a "Manual fix round N" section to migration-notes/<module>.md and a summary line.
 
     If the round passed, the earlier TODO items Claude says it resolved are struck through."""
@@ -209,6 +212,7 @@ def append_manual_fix(*, job, module, rnd, status, notes, claude_report, steps, 
                f"- **Result:** {status.upper()}" + (f" — {error}" if error else ""),
                f"- **Date:** {time.strftime('%Y-%m-%d %H:%M')}", "",
                "### What the tester reported", "", notes.strip() or "_No notes._", "",
+               *(["Attached:", *attachments.report_lines(files), ""] if files else []),
                "### Claude's report", "", report or "_No report._", ""]
     if resolved:
         section += ["### Earlier TODOs resolved (struck through above)", "",
